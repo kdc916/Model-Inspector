@@ -191,3 +191,16 @@ The inspector now reads the uploaded FBX's original `LayerElementColor.a` (ASCII
 **Tested input:** `Fx_Mesh_Circle01_AlphaSide.FBX` (provided privately by the user, NOT stored in this repository) includes 756 RGBA corner records with alpha values 0 / 0.1509 / 0.882416 / 1. The recovery check reconstructs 1,092 triangle vertices and confirms values from black through white.
 
 **Known limitation:** a multi-mesh FBX with several same-size unnamed geometries can be ambiguous; no uncertain alpha assignment is performed. Skinned/morph/complex FBX variants require browser-level model comparison. The source FBX is never uploaded to the app's server; all analysis runs locally.
+
+## v0.5.0 — Vertex Alpha Overlay + Blending
+
+`V.Alpha` (in viewer toolbar) toggles Vertex Alpha on top of **Material, Checker, or UV Grid** while keeping underlying textures and UV Flow active. The Inspector allows a red→green tint (`A=0` red / `A=1` green), grayscale mix, or texture-only mask with adjustable strength. The bottom checkbox is synchronized.
+
+Under **Material → Transparency**, choose:
+
+- **Opaque:** fully opaque surface; preview ignores alpha for transparency but tint/grayscale debug remains available.
+- **Alpha Blend:** standard see-through. Enabling `V.Alpha` multiplies the underlying texture/material opacity by the FBX/GLB vertex alpha when supplied.
+- **Additive:** additive light blending (typical VFX aura/glow). The alpha and overall opacity scale its contribution.
+- **Alpha Clip:** transparent fragments below the slider cutoff are discarded, also using vertex alpha when enabled.
+
+The existing dedicated `Vertex Alpha` view remains an absolute black–white diagnostic. Missing alpha is reported instead of treated as white. Tested with Node unit tests; Three.js CDN access is required for the browser app. The visual blending is a Three.js approximation and may differ from engine-specific material/shader settings.

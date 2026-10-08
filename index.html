@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.4.1</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.5.0</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -42,7 +42,7 @@
         <button class="tool" data-mode="vertex" title="Vertex RGB/R/G/B 검사">Vertex RGB</button>
         <button class="tool" data-mode="alpha" title="Vertex Alpha grayscale 검사">Vertex Alpha</button>
       </div>
-      <div class="toolbar-right"><button class="tool" id="btnWire" title="Toggle wireframe overlay">Wire</button><button class="tool icon-tool" id="btnFrame" title="모델 전체 화면 맞춤">⛶ <span>Fit</span></button><button class="tool icon-tool" id="btnScreenshot" title="뷰포트 PNG 저장">▣ <span>Capture</span></button></div>
+      <div class="toolbar-right"><button class="tool" id="btnAlphaOverlay" title="Toggle Vertex Alpha visualization without leaving Material / Checker / UV Grid">V.Alpha</button><button class="tool" id="btnWire" title="Toggle wireframe overlay">Wire</button><button class="tool icon-tool" id="btnFrame" title="모델 전체 화면 맞춤">⛶ <span>Fit</span></button><button class="tool icon-tool" id="btnScreenshot" title="뷰포트 PNG 저장">▣ <span>Capture</span></button></div>
     </div>
     <div id="viewport" class="viewport" aria-label="3D viewport">
       <div class="viewport-wait" id="loading"><div class="loader-ring"></div><strong>3D 엔진 준비 중</strong><small>Three.js 모듈을 불러오고 있습니다.</small></div>
@@ -56,7 +56,7 @@
       <div class="axis-tag">Y ↑ <i>·</i> X → <i>·</i> Z ↗</div>
     </div>
     <div class="statsbar"><div class="stat"><label>TRIANGLES</label><strong id="statTriangles">—</strong></div><div class="stat"><label>VERTICES</label><strong id="statVertices">—</strong></div><div class="stat"><label>MESHES</label><strong id="statMeshes">—</strong></div><div class="stat"><label>DRAW CALLS</label><strong id="statDrawCalls">—</strong></div><div class="stat"><label>FPS</label><strong id="statFPS">—</strong></div><div class="renderer-label">WEBGL</div></div>
-    <div class="bottom-options"><label class="check"><input type="checkbox" id="toggleGrid" checked> Grid</label><label class="check"><input type="checkbox" id="toggleAxes"> Axis</label><label class="check"><input type="checkbox" id="toggleWire"> Wireframe overlay</label><label class="check"><input type="checkbox" id="toggleNormals"> Normal vectors</label><label class="check"><input type="checkbox" id="toggleTangents"> Tangent vectors</label><label class="check"><input type="checkbox" id="toggleRotate"> Auto rotate</label><label class="check"><input type="checkbox" id="toggleDoubleSide"> Double sided</label></div>
+    <div class="bottom-options"><label class="check alpha-toggle"><input type="checkbox" id="toggleAlphaOverlay"> Vertex Alpha overlay</label><label class="check"><input type="checkbox" id="toggleGrid" checked> Grid</label><label class="check"><input type="checkbox" id="toggleAxes"> Axis</label><label class="check"><input type="checkbox" id="toggleWire"> Wireframe overlay</label><label class="check"><input type="checkbox" id="toggleNormals"> Normal vectors</label><label class="check"><input type="checkbox" id="toggleTangents"> Tangent vectors</label><label class="check"><input type="checkbox" id="toggleRotate"> Auto rotate</label><label class="check"><input type="checkbox" id="toggleDoubleSide"> Double sided</label></div>
   </main>
 
   <aside class="right-panel panel">
@@ -72,6 +72,12 @@
         <div class="diagnostic-result" id="vertexAlphaHealth">Vertex Alpha 채널을 검사합니다.</div>
         <button class="subtle full" id="btnAlphaReport">⇩ Vertex Alpha 진단 리포트 (.json)</button>
         <div class="note small-note">3ds Max의 Vertex Alpha는 Map Channel -2입니다. FBX에서 RGB만 들어오면 알파를 1로 만들지 않고 핑크색으로 표시합니다. 흰색으로만 나타나면 보고서에서 'A 채널 미포함'과 'A=1.0'을 구분하세요.</div>
+        <div class="section-title separated"><span>VERTEX ALPHA OVERLAY</span><span class="chip">LIVE</span></div>
+        <div class="description">Material / Checker / UV Grid 위에 Vertex Alpha를 겹쳐 표시합니다. 검정 A=0, 흰색 A=1. 투명도는 Material → Transparency에서 설정합니다.</div>
+        <label class="check material-check"><input id="toggleAlphaInspector" type="checkbox"> Enable Vertex Alpha overlay</label>
+        <div class="field"><label for="alphaOverlayView">Visualization</label><select id="alphaOverlayView"><option value="tint">Red (0) → Green (1) · texture tint</option><option value="gray">Grayscale (A) over texture</option><option value="mask">Texture only · use alpha for Blend/Add/Clip</option></select></div>
+        <div class="field"><label for="alphaOverlayStrength">Overlay strength <output id="valueAlphaOverlayStrength">0.55</output></label><input id="alphaOverlayStrength" type="range" min="0" max="1" step="0.05" value="0.55"></div>
+        <div class="note small-note">Vertex Alpha 없는 메시는 오버레이에서 제외하고 진단 경고를 표시합니다. Alpha Blend/Additive/Clip에서는 알파값이 실제 출력의 투명도에도 반영됩니다.</div>
         <div class="section-title separated"><span>WIREFRAME</span></div>
         <div class="description">모델 재질 위에 와이어를 겹쳐 표시합니다. X-Ray에서는 뒤쪽의 와이어도 보입니다.</div>
         <div class="field"><label for="wireOpacity">Wire opacity <output id="valueWireOpacity">0.90</output></label><input id="wireOpacity" type="range" min="0.10" max="1" step="0.05" value="0.9"></div>
@@ -134,9 +140,9 @@
         <div class="field"><label for="matDisplacementBias">Displacement bias <output id="valueDisplacementBias">0.00</output></label><input id="matDisplacementBias" type="range" min="-1" max="1" step="0.01" value="0"></div>
         <div class="section-title separated"><span>TRANSPARENCY</span></div>
         <div class="field"><label for="matOpacity">Overall opacity <output id="valueOpacity">1.00</output></label><input id="matOpacity" type="range" min="0" max="1" step="0.01" value="1"></div>
-        <div class="field"><label for="matAlphaMode">Transparency mode</label><select id="matAlphaMode"><option value="opaque">Opaque (불투명)</option><option value="blend">Alpha Blend (반투명)</option><option value="mask">Alpha Clip (컷아웃)</option></select></div>
+        <div class="field"><label for="matAlphaMode">Transparency mode</label><select id="matAlphaMode"><option value="opaque">Opaque (불투명)</option><option value="blend">Alpha Blend (반투명)</option><option value="add">Additive (가산합성)</option><option value="mask">Alpha Clip (컷아웃)</option></select></div>
         <div class="field"><label for="matAlphaCutoff">Alpha clip threshold <output id="valueAlphaCutoff">0.50</output></label><input id="matAlphaCutoff" type="range" min="0" max="1" step="0.01" value="0.5" disabled></div>
-        <div class="note small-note">Opacity Map은 흑백 이미지의 G 채널을 사용합니다. RGBA PNG의 A 채널은 Base Color에서도 사용할 수 있습니다. UV가 없으면 텍스처가 표시되지 않을 수 있습니다. AO는 UV 채널 확인이 필요합니다.</div>
+        <div class="note small-note">Opaque는 알파를 무시하고 불투명으로 표시합니다. Blend/Additive/Clip은 Vertex Alpha overlay를 활성화하면 메시의 A값도 사용합니다. Additive는 빛·오라처럼 밝게 더하는 미리보기입니다.</div><div class="note small-note">Opacity Map은 흑백 이미지의 G 채널을 사용합니다. RGBA PNG의 A 채널은 Base Color에서도 사용할 수 있습니다. UV가 없으면 텍스처가 표시되지 않을 수 있습니다. AO는 UV 채널 확인이 필요합니다.</div>
         <label class="check material-check"><input type="checkbox" id="flipTextureY"> Flip uploaded texture Y</label>
         <button class="subtle full" id="btnMaterialReset">↺ 원본 재질 복원</button>
       </section>
@@ -146,7 +152,7 @@
 </div>
 <input id="fileInput" type="file" multiple accept=".glb,.gltf,.fbx,.obj,.mtl,.stl,.ply,.3ds,.dae,.3mf,.blend,.max,.bin,.png,.jpg,.jpeg,.webp,.tga,.dds,.ktx2,.bmp" hidden />
 <input id="folderInput" type="file" multiple webkitdirectory directory hidden />
-<dialog id="helpDialog"><div class="modal-header"><strong>maxVFX Model Inspector</strong><button id="btnHelpClose" class="ghost" aria-label="닫기">✕</button></div><div class="modal-body"><h3>시작하기</h3><p>모델을 드래그하거나 <b>모델 열기</b>로 불러옵니다. glTF(.gltf)와 OBJ(.obj)는 이미지, .bin, .mtl 등 관련 파일을 함께 선택하거나 폴더 전체 선택을 이용하세요.</p><h3>UV / 텍스처 검사</h3><p>Checker/UV Grid/UV Stretch/Vertex RGB/Vertex Alpha를 전환하여 데이터를 검사하고, <b>UV & Flow</b>에서 X/Y 속도를 조절하세요. +X는 화면의 텍스처가 U+ 방향으로, +Y는 V+ 방향으로 이동하도록 보정합니다.</p><h3>Vertex Alpha 검증 / 3ds Max</h3><p><b>핑크 메시</b> = 실제로 로드된 Geometry에 Alpha가 없는 상태입니다. <b>흰색 메시</b> = RGBA A값이 1.0인 상태입니다. 3ds Max에서 Vertex Alpha(-2)에 페인트하고 Export FBX의 Vertex Colors 옵션을 켠 뒤 재수입하여 확인하세요. Exporter가 A를 전달하지 않은 경우 뷰어가 임의로 복원할 수는 없습니다.</p><h3>Blender / 3ds Max</h3><p><b>.blend</b>와 <b>.max</b>는 브라우저에서 직접 해석할 수 없습니다. Blender는 File → Export → glTF 2.0 (.glb), 3ds Max는 Export → FBX로 변환한 후 불러오세요. 동봉된 Blender 일괄 변환 스크립트도 사용할 수 있습니다.</p><h3>추가 머티리얼 옵션</h3><p>Packed ORM 이미지를 올리면 AO(R), Roughness(G), Metallic(B)에 자동 연결합니다. Normal Map Green 반전은 노멀 스케일 Y만 반전하며 원본 이미지를 수정하지 않습니다. 선택 메시의 Material ID별 편집을 지원합니다.</p><h3>단축 사용법</h3><p>좌클릭 회전 · 우클릭 패닝 · 휠 줌 · 메시 클릭하여 선택 · Fit으로 화면 맞춤. 원본 모델은 서버로 업로드되지 않습니다. 외부 라이브러리 로딩을 위해 인터넷 연결은 필요합니다.</p></div></dialog>
+<dialog id="helpDialog"><div class="modal-header"><strong>maxVFX Model Inspector</strong><button id="btnHelpClose" class="ghost" aria-label="닫기">✕</button></div><div class="modal-body"><h3>시작하기</h3><p>모델을 드래그하거나 <b>모델 열기</b>로 불러옵니다. glTF(.gltf)와 OBJ(.obj)는 이미지, .bin, .mtl 등 관련 파일을 함께 선택하거나 폴더 전체 선택을 이용하세요.</p><h3>UV / 텍스처 검사</h3><p>Checker/UV Grid/UV Stretch/Vertex RGB/Vertex Alpha를 전환하여 데이터를 검사합니다. <b>V.Alpha</b>는 Material / Checker / UV Grid 위에 겹쳐 켤 수 있습니다. 머티리얼의 Opaque/Blend/Additive/Clip을 조합해 확인하고, <b>UV & Flow</b>에서 X/Y 속도를 조절하세요. +X는 화면의 텍스처가 U+ 방향으로, +Y는 V+ 방향으로 이동하도록 보정합니다.</p><h3>Vertex Alpha 검증 / 3ds Max</h3><p><b>핑크 메시</b> = 실제로 로드된 Geometry에 Alpha가 없는 상태입니다. <b>흰색 메시</b> = RGBA A값이 1.0인 상태입니다. 3ds Max에서 Vertex Alpha(-2)에 페인트하고 Export FBX의 Vertex Colors 옵션을 켠 뒤 재수입하여 확인하세요. Exporter가 A를 전달하지 않은 경우 뷰어가 임의로 복원할 수는 없습니다.</p><h3>Blender / 3ds Max</h3><p><b>.blend</b>와 <b>.max</b>는 브라우저에서 직접 해석할 수 없습니다. Blender는 File → Export → glTF 2.0 (.glb), 3ds Max는 Export → FBX로 변환한 후 불러오세요. 동봉된 Blender 일괄 변환 스크립트도 사용할 수 있습니다.</p><h3>추가 머티리얼 옵션</h3><p>Packed ORM 이미지를 올리면 AO(R), Roughness(G), Metallic(B)에 자동 연결합니다. Normal Map Green 반전은 노멀 스케일 Y만 반전하며 원본 이미지를 수정하지 않습니다. 선택 메시의 Material ID별 편집을 지원합니다.</p><h3>단축 사용법</h3><p>좌클릭 회전 · 우클릭 패닝 · 휠 줌 · 메시 클릭하여 선택 · Fit으로 화면 맞춤. 원본 모델은 서버로 업로드되지 않습니다. 외부 라이브러리 로딩을 위해 인터넷 연결은 필요합니다.</p></div></dialog>
 <script>
 // No endless loading spinner when a CDN is blocked by the user's network.
 setTimeout(() => {

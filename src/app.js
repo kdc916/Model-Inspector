@@ -8,7 +8,8 @@ import { LocalModelLoader } from './model-loaders.js';
 import { createDemo, makeCheckerTexture } from './procedural.js';
 import { drawUVLayout, inspectMeshes } from './analysis.js';
 import { finite, modelStats, textureOffsetFromVisual, triangleCount } from './uv-utils.js';
-import { analyzeUVStretch, extractVertexColors, analyzeVertexAlpha } from './mesh-diagnostics.js';
+import { analyzeUVStretch, extractVertexColors, analyzeVertexAlpha, locateVertexAlpha, readColorComponent } from './mesh-diagnostics.js';
+import { overlayState, alphaMaskFactor, installAlphaShader, updateAlphaShaderUniforms } from './alpha-preview.js';
 import { TEXTURE_SLOTS, ORM_SLOTS, normalScalePair, scopedMaterialIndices, materialValue, alphaMaterialSettings } from './material-controls.js';
 
 const $ = (s) => document.querySelector(s);
@@ -69,6 +70,52 @@ function setLoading(visible,message='모델을 불러오고 있습니다.'){
 }
 function gatherMeshes(root){const list=[];root?.traverse(obj=>{if(obj.isMesh && obj.geometry?.getAttribute('position')) list.push(obj)});return list;}
 function materials(mesh){return Array.isArray(mesh.material)?mesh.material:[mesh.material];}
+/** v0.5: Keep Vertex Alpha on the geometry so it survives debug/UV preview clones. */
+function prepareInspectionAlpha(mesh){
+  const geo=state.originalGeos.get(mesh)||mesh.geometry;
+  if(!geo || geo.hasAttribute('vfxInspectionAlpha'))return;
+  const position=geo.getAttribute('position');if(!position)return;
+  const {attribute,component}=locateVertexAlpha(geo);
+  const out=new Float32Array(position.count);
+  if(attribute){for(let i=0;i<position.count;i++)out[i]=readColorComponent(attribute,i,component)??1;}
+  geo.setAttribute('vfxInspectionAlpha',new THREE.BufferAttribute(out,1));
+  // Warn in the Inspector rather than treating a missing channel as transparent.
+}
+function applyBlendToMaterial(mat,mode,opacity,cutoff){
+  const settings=alphaMaterialSettings(mode,opacity,cutoff);
+  mat.transparent=settings.transparent;
+  mat.opacity=settings.opacity;
+  mat.alphaTest=settings.alphaTest;
+  mat.depthWrite=settings.depthWrite;
+  mat.blending=settings.blending==='additive'?THREE.AdditiveBlending:THREE.NormalBlending;
+  mat.userData.vfxAlphaMode=settings.alphaMode;
+  mat.needsUpdate=true;
+}
+/** Works on both PBR materials and checker/grid, independent of the main view mode. */
+function configureAlphaForMaterial(mesh,material){
+  if(!material)return;
+  const attr=locateVertexAlpha(state.originalGeos.get(mesh)||mesh.geometry);
+  const hasAlpha=!!attr.attribute;
+  const overlay=overlayState($('#toggleAlphaOverlay').checked,$('#alphaOverlayView').value,$('#alphaOverlayStrength').value,hasAlpha,state.mode);
+  installAlphaShader(material);
+  const mode=material.userData?.vfxAlphaMode||(material.transparent?'blend':'opaque');
+  const rgbaColor=(state.originalGeos.get(mesh)||mesh.geometry).getAttribute('color');
+  const preConsumed=Boolean(material.vertexColors && rgbaColor?.itemSize>=4);
+  const mask=alphaMaskFactor(overlay.active,mode,hasAlpha,preConsumed);
+  updateAlphaShaderUniforms(material,{mode:overlay.mode,strength:overlay.strength,mask});
+}
+function refreshAlphaOverlayStatus(){
+  const checked=$('#toggleAlphaOverlay').checked;
+  $('#btnAlphaOverlay').classList.toggle('active',checked);
+  $('#toggleAlphaInspector').checked=checked;
+  $('#alphaLegend').hidden=state.mode!=='alpha' && !(checked && $('#alphaOverlayView').value==='gray' && ['checker','uvgrid','material'].includes(state.mode));
+  refreshAlphaViewportWarning();
+}
+function setAlphaOverlay(enabled){
+  $('#toggleAlphaOverlay').checked=Boolean(enabled);
+  updateDisplayMaterial();
+  refreshAlphaOverlayStatus();
+}
 function getStretch(mesh) {
   let byChannel=state.stretchCache.get(mesh);
   if(!byChannel){byChannel=new Map();state.stretchCache.set(mesh,byChannel);}
@@ -115,9 +162,15 @@ function assignDebugMaterial(mesh,material){
 }
 function updateDisplayMaterial(){
   for(const mesh of state.meshes){
+    prepareInspectionAlpha(mesh);
     ensurePreviewGeometry(mesh);
     const cache=state.debugMats.get(mesh)||{};
     if(state.mode==='material'){
+      // Never mutate an imported material to attach preview shaders.
+      if($('#toggleAlphaOverlay').checked && !cache.working){
+        makeWorkingMaterials(mesh);
+        cache.working=state.debugMats.get(mesh).working;
+      }
       mesh.material=cache.working??state.originalMats.get(mesh);
     } else if(state.mode==='normal'){
       if(!cache.normal) cache.normal=new THREE.MeshNormalMaterial({side:THREE.DoubleSide});
@@ -139,7 +192,15 @@ function updateDisplayMaterial(){
         cache[name]=new THREE.MeshBasicMaterial({map:tex,color:0xffffff,side:THREE.DoubleSide});
       }
       cache[name].map.channel=state.uvChannel;
+      // Transparency controls preview the same way in Material, Checker and UV Grid.
+      applyBlendToMaterial(cache[name],$('#matAlphaMode').value,$('#matOpacity').value,$('#matAlphaCutoff').value);
       assignDebugMaterial(mesh,cache[name]);
+    }
+    if(['material','checker','uvgrid'].includes(state.mode)){
+      for(const mat of (Array.isArray(mesh.material)?mesh.material:[mesh.material])){
+        // Only patch cloned/owned materials; original materials are never modified.
+        if(cache.working || state.mode!=='material')configureAlphaForMaterial(mesh,mat);
+      }
     }
     state.debugMats.set(mesh,cache);
   }
@@ -149,6 +210,7 @@ function updateDisplayMaterial(){
   $('#diagnosticLegend').hidden=state.mode!=='stretch';
   $('#vertexOptions').hidden=state.mode!=='vertex';
   $('#alphaLegend').hidden=state.mode!=='alpha';
+  refreshAlphaOverlayStatus();
   refreshAlphaViewportWarning();
   applyTextureParameters();
 }
@@ -208,6 +270,7 @@ function installModel(root,meta={},clips=[]){
     if(!mesh.name)mesh.name=`Mesh ${i+1}`;
     state.originalMats.set(mesh,mesh.material);
     state.originalGeos.set(mesh,mesh.geometry);
+    prepareInspectionAlpha(mesh);
     if(mesh.geometry && !mesh.geometry.hasAttribute('normal'))mesh.geometry.computeVertexNormals();
   }
   scene.add(root);
@@ -344,7 +407,7 @@ function formatAlphaReport(reports,meshes){
 function refreshAlphaViewportWarning(){
   const el=$('#alphaViewportAlert');
   if(!el)return;
-  const alphaActive=state.mode==='alpha'||(state.mode==='vertex'&&$('#vertexChannel').value==='a');
+  const alphaActive=state.mode==='alpha'||(state.mode==='vertex'&&$('#vertexChannel').value==='a')||$('#toggleAlphaOverlay').checked;
   const meshes=inspected();
   const reports=meshes.map(m=>analyzeVertexAlpha(state.originalGeos.get(m)||m.geometry));
   const missing=reports.filter(r=>!r.hasAlpha).length;
@@ -352,7 +415,7 @@ function refreshAlphaViewportWarning(){
   el.hidden=!alphaActive||(!missing&&!fullWhite);
   if(el.hidden)return;
   el.textContent=missing
-    ?`⚠ Vertex Alpha 누락: ${missing}/${meshes.length} mesh · 핑크 표시는 알파 채널 미포함(RGB만 있거나 색상 없음)`
+    ?`⚠ Vertex Alpha 누락: ${missing}/${meshes.length} mesh · 채널 없는 메시는 Overlay 적용하지 않음 (단독 검사에서는 핑크)`
     :`⚠ RGBA는 있으나 ${fullWhite}/${meshes.length} mesh의 A값이 전부 1.0입니다. 원본 FBX를 확인하세요.`;
 }
 function updateVertexAlphaHealth(){
@@ -445,7 +508,7 @@ function makeWorkingMaterials(mesh){
   const editable=Array.isArray(cache.working)?cache.working:[cache.working];
   return editable.map((m,i)=>{
     if(!m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial){
-      const standard=new THREE.MeshStandardMaterial({color:m.color?.clone()||new THREE.Color('#ffffff'),map:m.map||null,normalMap:m.normalMap||null,roughnessMap:m.roughnessMap||null,metalnessMap:m.metalnessMap||null,emissiveMap:m.emissiveMap||null,alphaMap:m.alphaMap||null,aoMap:m.aoMap||null,transparent:m.transparent,opacity:m.opacity??1,side:m.side});
+      const standard=new THREE.MeshStandardMaterial({color:m.color?.clone()||new THREE.Color('#ffffff'),map:m.map||null,normalMap:m.normalMap||null,roughnessMap:m.roughnessMap||null,metalnessMap:m.metalnessMap||null,emissiveMap:m.emissiveMap||null,alphaMap:m.alphaMap||null,aoMap:m.aoMap||null,vertexColors:!!m.vertexColors,transparent:m.transparent,opacity:m.opacity??1,side:m.side});
       if(Array.isArray(cache.working))cache.working[i]=standard;else cache.working=standard;
       m.dispose();return standard;
     }
@@ -478,12 +541,11 @@ function applyMaterialInputs(meshes=scopeMeshes(),changed=null){
     if(!changed||changed==='matDisplacementScale')mat.displacementScale=materialValue('displacementScale',$('#matDisplacementScale').value);
     if(!changed||changed==='matDisplacementBias')mat.displacementBias=materialValue('displacementBias',$('#matDisplacementBias').value);
     if(!changed||changed==='matAlphaMode'||changed==='matOpacity'||changed==='matAlphaCutoff'){
-      mat.transparent=settings.transparent;mat.opacity=settings.opacity;
-      mat.alphaTest=settings.alphaTest;mat.depthWrite=settings.depthWrite;
+      applyBlendToMaterial(mat,settings.alphaMode,$('#matOpacity').value,$('#matAlphaCutoff').value);
     }
     mat.needsUpdate=true;
   }
-  if(state.mode==='material')updateDisplayMaterial();
+  if(['material','checker','uvgrid'].includes(state.mode))updateDisplayMaterial();
 }
 function applyTextureParameters(){
   const x = state.visualOffsetX, y=state.visualOffsetY;
@@ -681,7 +743,7 @@ function bindUI(){
   $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
   $('#btnAlphaReport').onclick=()=>{
     const inspectedMeshes=inspected();
-    const report={tool:'maxVFX Model Inspector',version:'0.4.0',asset:$('#assetTitle').textContent,
+    const report={tool:'maxVFX Model Inspector',version:'0.5.0',asset:$('#assetTitle').textContent,
       warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
       meshes:inspectedMeshes.map(mesh=>{
         const geo=state.originalGeos.get(mesh)||mesh.geometry;
@@ -714,6 +776,14 @@ function bindUI(){
   $('#toggleAxes').onchange=e=>axes.visible=e.target.checked;
   $('#toggleWire').onchange=updateWireframe;
   $('#btnWire').onclick=()=>{$('#toggleWire').checked=!$('#toggleWire').checked;updateWireframe();};
+  $('#btnAlphaOverlay').onclick=()=>setAlphaOverlay(!$('#toggleAlphaOverlay').checked);
+  $('#toggleAlphaOverlay').onchange=e=>setAlphaOverlay(e.target.checked);
+  $('#toggleAlphaInspector').onchange=e=>setAlphaOverlay(e.target.checked);
+  $('#alphaOverlayView').onchange=()=>{updateDisplayMaterial();refreshAlphaOverlayStatus();};
+  $('#alphaOverlayStrength').oninput=e=>{
+    $('#valueAlphaOverlayStrength').textContent=Number(e.target.value).toFixed(2);
+    updateDisplayMaterial();
+  };
   for(const id of ['wireOpacity','wireColor','wireXray'])$('#'+id).addEventListener('input',updateWireStyle);
   $('#toggleNormals').onchange=updateNormalHelper;
   $('#toggleTangents').onchange=updateTangentHelper;

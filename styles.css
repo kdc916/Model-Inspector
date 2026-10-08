@@ -31,3 +31,8 @@
 .orm-upload span,.orm-upload small{font-size:11px;color:#a8d5cc}
 .orm-upload small{word-break:break-all;color:#f1dc9b}
 @media(max-width:760px){.alpha-viewport-alert{bottom:90px;font-size:11px;max-width:96%;width:94%}}
+
+/* v0.5: independent, always-accessible vertex alpha overlay controls */
+.alpha-toggle{font-weight:650;color:#d8f5ea}
+#btnAlphaOverlay.active{color:#adffd7;border-color:#72e4b2;background:rgba(47,164,111,.19)}
+#alphaOverlayView{max-width:100%}
