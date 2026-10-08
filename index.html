@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.8.0</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.8.1</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -42,7 +42,7 @@
         <button class="tool" data-mode="vertex" title="Vertex RGB/R/G/B 검사">Vertex RGB</button>
         <button class="tool" data-mode="alpha" title="Vertex Alpha grayscale 검사">Vertex Alpha</button>
       </div>
-      <div class="toolbar-right"><button class="tool" id="btnAlphaOverlay" title="Toggle Vertex Alpha visualization without leaving Material / Checker / UV Grid">V.Alpha</button><button class="tool" id="btnWire" title="Toggle wireframe overlay">Wire</button><button class="tool icon-tool" id="btnFrame" title="모델 전체 화면 맞춤">⛶ <span>Fit</span></button><button class="tool icon-tool" id="btnScreenshot" title="뷰포트 PNG 저장">▣ <span>Capture</span></button></div>
+      <div class="toolbar-right"><button class="tool" id="btnAlphaOverlay" title="Apply real Vertex Alpha transparency over textures in Material / Checker / UV Grid">V.Alpha</button><button class="tool" id="btnWire" title="Toggle wireframe overlay">Wire</button><button class="tool icon-tool" id="btnFrame" title="모델 전체 화면 맞춤">⛶ <span>Fit</span></button><button class="tool icon-tool" id="btnScreenshot" title="뷰포트 PNG 저장">▣ <span>Capture</span></button></div>
     </div>
     <div id="viewport" class="viewport" aria-label="3D viewport">
       <div class="viewport-wait" id="loading"><div class="loader-ring"></div><strong>3D 엔진 준비 중</strong><small>Three.js 모듈을 불러오고 있습니다.</small></div>
@@ -56,7 +56,7 @@
       <div class="axis-tag">Y ↑ <i>·</i> X → <i>·</i> Z ↗</div>
     </div>
     <div class="statsbar"><div class="stat"><label>TRIANGLES</label><strong id="statTriangles">—</strong></div><div class="stat"><label>VERTICES</label><strong id="statVertices">—</strong></div><div class="stat"><label>MESHES</label><strong id="statMeshes">—</strong></div><div class="stat"><label>DRAW CALLS</label><strong id="statDrawCalls">—</strong></div><div class="stat"><label>FPS</label><strong id="statFPS">—</strong></div><div class="renderer-label">WEBGL</div></div>
-    <div class="bottom-options"><label class="check alpha-toggle"><input type="checkbox" id="toggleAlphaOverlay"> Vertex Alpha overlay</label><label class="check"><input type="checkbox" id="toggleGrid" checked> Grid</label><label class="check"><input type="checkbox" id="toggleAxes"> Axis</label><label class="check"><input type="checkbox" id="toggleWire"> Wireframe overlay</label><label class="check"><input type="checkbox" id="toggleNormals"> Normal vectors</label><label class="check"><input type="checkbox" id="toggleTangents"> Tangent vectors</label><label class="check"><input type="checkbox" id="toggleRotate"> Auto rotate</label><label class="check"><input type="checkbox" id="toggleDoubleSide"> Double sided</label></div>
+    <div class="bottom-options"><label class="check alpha-toggle"><input type="checkbox" id="toggleAlphaOverlay"> Vertex Alpha transparency</label><label class="check"><input type="checkbox" id="toggleGrid" checked> Grid</label><label class="check"><input type="checkbox" id="toggleAxes"> World Axis</label><label class="check"><input type="checkbox" id="togglePivot" checked> Mesh Pivot</label><label class="check"><input type="checkbox" id="toggleWire"> Wireframe overlay</label><label class="check"><input type="checkbox" id="toggleNormals"> Normal vectors</label><label class="check"><input type="checkbox" id="toggleTangents"> Tangent vectors</label><label class="check"><input type="checkbox" id="toggleRotate"> Auto rotate</label><label class="check"><input type="checkbox" id="toggleDoubleSide"> Double sided</label></div>
   </main>
 
   <aside class="right-panel panel">
@@ -73,15 +73,20 @@
         <button class="subtle full" id="btnAlphaReport">⇩ Vertex Alpha 진단 리포트 (.json)</button>
         <div class="note small-note">3ds Max의 Vertex Alpha는 Map Channel -2입니다. FBX에서 RGB만 들어오면 알파를 1로 만들지 않고 핑크색으로 표시합니다. 흰색으로만 나타나면 보고서에서 'A 채널 미포함'과 'A=1.0'을 구분하세요.</div>
         <div class="section-title separated"><span>VERTEX ALPHA OVERLAY</span><span class="chip">LIVE</span></div>
-        <div class="description">Material / Checker / UV Grid 위에 Vertex Alpha를 겹쳐 표시합니다. 검정 A=0, 흰색 A=1. 투명도는 Material → Transparency에서 설정합니다.</div>
-        <label class="check material-check"><input id="toggleAlphaInspector" type="checkbox"> Enable Vertex Alpha overlay</label>
-        <div class="field"><label for="alphaOverlayView">Visualization</label><select id="alphaOverlayView"><option value="tint">Red (0) → Green (1) · texture tint</option><option value="gray">Grayscale (A) over texture</option><option value="mask">Texture only · use alpha for Blend/Add/Clip</option></select></div>
+        <div class="description">Material / Checker / UV Grid의 실제 텍스처에 Vertex Alpha를 곱해 투명하게 표시합니다. 검정 A=0 투명, 흰색 A=1 불투명. 기존 Opaque 모드에서는 미리보기에만 자동 Alpha Blend를 적용합니다.</div>
+        <label class="check material-check"><input id="toggleAlphaInspector" type="checkbox"> Enable Vertex Alpha transparency</label>
+        <div class="field"><label for="alphaOverlayView">Visualization</label><select id="alphaOverlayView"><option value="apply" selected>Apply Alpha · original texture (default)</option><option value="tint">Alpha + Red/Green diagnostic tint</option><option value="gray">Alpha + Grayscale diagnostic</option><option value="mask">Texture only · legacy compatible</option></select></div>
         <div class="field"><label for="alphaOverlayStrength">Overlay strength <output id="valueAlphaOverlayStrength">0.55</output></label><input id="alphaOverlayStrength" type="range" min="0" max="1" step="0.05" value="0.55"></div>
-        <div class="note small-note">Vertex Alpha 없는 메시는 오버레이에서 제외하고 진단 경고를 표시합니다. Alpha Blend/Additive/Clip에서는 알파값이 실제 출력의 투명도에도 반영됩니다.</div>
+        <div class="note small-note">Vertex Alpha 없는 메시는 오버레이에서 제외하고 진단 경고를 표시합니다. 이제 Opaque에서도 Vertex Alpha가 실제 텍스처 투명도에 적용됩니다. RGB-only 메시에는 투명도를 임의 생성하지 않습니다.</div>
         <div class="section-title separated"><span>WIREFRAME</span></div>
         <div class="description">모델 재질 위에 와이어를 겹쳐 표시합니다. X-Ray에서는 뒤쪽의 와이어도 보입니다.</div>
         <div class="field"><label for="wireOpacity">Wire opacity <output id="valueWireOpacity">0.90</output></label><input id="wireOpacity" type="range" min="0.10" max="1" step="0.05" value="0.9"></div>
         <div class="speed-grid"><div class="field"><label for="wireColor">Wire color</label><input id="wireColor" type="color" value="#72f7e5"></div><label class="check wire-xray"><input type="checkbox" id="wireXray"> X-Ray (see-through)</label></div>
+        <div class="section-title separated"><span>AXIS &amp; PIVOT GUIDES</span><span class="chip">XYZ</span></div>
+        <div class="description">World Axis는 (0,0,0) 기준, Pivot XYZ는 모델/메시의 실제 로컬 원점과 월드 방향을 표시합니다. X 빨강 · Y 초록 · Z 파랑.</div>
+        <div class="field"><label for="pivotScope">Pivot target</label><select id="pivotScope"><option value="selected">Selected mesh / first mesh</option><option value="all">All meshes (max 64)</option><option value="root">Model root</option></select></div>
+        <div class="field"><label for="axisSize">Gizmo relative size <output id="valueAxisSize">0.35</output></label><input id="axisSize" type="range" min="0.05" max="1.5" step="0.05" value="0.35"></div>
+        <div class="diagnostic-result" id="pivotStatus">No model</div>
         <div class="section-title separated"><span>ANIMATION</span></div>
         <div class="field"><label for="animationSelect">Model clip</label><select id="animationSelect"><option value="">No animation</option></select></div>
         <div class="inline-actions"><button class="subtle" id="btnAnimToggle">▶ Play</button><button class="subtle" id="btnFocus">⌕ Focus selected</button></div>

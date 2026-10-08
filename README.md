@@ -246,3 +246,15 @@ npm test
 python -m http.server 8000
 # http://localhost:8000/
 ```
+
+## v0.8.1 · Vertex Alpha & Pivot QA Patch (2026-10-08)
+
+- **Vertex Alpha가 실제 텍스처에서 투명도를 제거/반영합니다.** `V.Alpha` ON → Material/Checker/UV Grid의 원본 색상 유지 + A=0 완전 투명, A=1 완전 불투명. 사용 중인 재질이 Opaque여도 **미리보기 한정** Alpha Blend가 자동 활성화됩니다. OFF 시 원래 Opaque 렌더 상태로 복귀합니다.
+- `Visualization` 기본값을 `Apply Alpha · original texture`로 변경. 이전 적/녹색 Tint 및 Grayscale은 **별도 진단용 옵션**으로 유지하며, 선택 시에도 Vertex Alpha를 실제 투명도에 적용합니다.
+- FBX 복구 RGBA 및 glTF 기본 RGBA에서 **알파를 두 번 곱하지 않도록** `vertexColors` 여부를 검사합니다. RGB-only 모델은 알파 데이터를 자동 생성하지 않으며 경고/누락 진단은 유지합니다.
+- `World Axis` / `Mesh Pivot` 독립 ON/OFF. 월드 축은 (0,0,0), 피벗은 선택 메시 / 전체 메시(최대 64개) / 모델 루트 중 고를 수 있습니다. X(빨강)·Y(초록)·Z(파랑) 화살표와 로컬 방향 및 원점 표시. 메시의 이동·회전을 따라갑니다.
+- `Gizmo relative size`로 **모델 월드 바운딩 크기에 비례한 길이**를 0.05~1.5 범위에서 조절. 선택 메시의 피벗 월드 위치/로컬 위치/월드 XYZ 회전값을 Inspector에서 조회할 수 있습니다.
+- 오류 수정: 모델 임포트 시 `root.position=(0,0,0)`으로 강제 덮어쓰던 처리를 제거해 원본 루트 위치·피벗을 보존합니다.
+- `render-state.js`(순수 렌더 블렌딩 상태), `scene-guides.js`(World/Pivot Gizmo), `alpha-preview.js`(알파 처리)를 분리해 회귀 테스트를 강화했습니다.
+
+**수동 검증 권장:** `Fx_Mesh_Circle01_AlphaSide.FBX`의 `V.Alpha + Checker + Opaque`, `V.Alpha + User Texture + Opaque`, `V.Alpha + Additive`, `V.Alpha OFF 복구`, 메시 회전/애니메이션의 피벗 방향과 Gizmo 크기를 Edge/Chrome에서 확인하세요. 이 로컬 테스트 환경은 Three.js CDN 접근이 차단되어 실시간 WebGL 픽셀 캡처가 아직 검증되지 않았습니다.

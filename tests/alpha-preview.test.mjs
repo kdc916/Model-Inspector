@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import {overlayState,alphaMaskFactor,installAlphaShader,updateAlphaShaderUniforms} from '../src/alpha-preview.js';
+import {overlayState,alphaMaskFactor,effectiveAlphaMode,installAlphaShader,updateAlphaShaderUniforms} from '../src/alpha-preview.js';
 import {alphaMaterialSettings, resolveAlphaMode} from '../src/material-controls.js';
 
 test('alpha preview remains available on material/checker/uvgrid without replacing surface mode', () => {
@@ -14,16 +14,21 @@ test('alpha preview remains available on material/checker/uvgrid without replaci
   assert.equal(overlayState(true,'gray',.5,false,'checker').active,false);
   assert.equal(overlayState(false,'tint',.5,true,'material').mode,0);
   assert.equal(overlayState(true,'tint',.6,true,'normal').mode,0);
+  assert.equal(overlayState(true,'apply',1,true,'checker').mode,0);
 });
 
-test('Vertex Alpha drives transparency for blend/add/mask but never opaque; no double multiply of native RGBA', () => {
+test('Vertex Alpha drives transparency even from Opaque and never double-multiplies native RGBA', () => {
   for(const mode of ['blend','add','mask']){
     assert.equal(alphaMaskFactor(true,mode,true),1);
     assert.equal(alphaMaskFactor(false,mode,true),0);
     assert.equal(alphaMaskFactor(true,mode,false),0);
     assert.equal(alphaMaskFactor(true,mode,true,true),0);
   }
-  assert.equal(alphaMaskFactor(true,'opaque',true),0);
+  assert.equal(alphaMaskFactor(true,'opaque',true),1);
+  assert.equal(effectiveAlphaMode('opaque',true,true),'blend');
+  assert.equal(effectiveAlphaMode('opaque',false,true),'opaque');
+  assert.equal(effectiveAlphaMode('opaque',true,false),'opaque');
+  assert.equal(effectiveAlphaMode('add',true,true),'add');
   assert.equal(resolveAlphaMode('add'),'add');
   assert.deepEqual(alphaMaterialSettings('add',.5,.5),{transparent:true,alphaTest:0,opacity:.5,depthWrite:false,alphaMode:'add',blending:'additive'});
   assert.equal(alphaMaterialSettings('opaque',.3,.5).opacity,1);
@@ -36,7 +41,7 @@ test('Shader patch injects uniform and alpha attribute once and updates without 
     onBeforeCompile(){compileCalls++},customProgramCacheKey(){return 'basic'}};
   installAlphaShader(mat);
   installAlphaShader(mat);
-  assert.equal(mat.customProgramCacheKey(),'basic|maxvfx-alpha-preview-v2');
+  assert.equal(mat.customProgramCacheKey(),'basic|maxvfx-alpha-preview-v3');
   const shader={uniforms:{},vertexShader:'void main(){\n#include <begin_vertex>\n}',
     fragmentShader:'void main(){\n#include <color_fragment>\n#include <alphamap_fragment>\n#include <alphatest_fragment>\n}'};
   mat.onBeforeCompile(shader,{});

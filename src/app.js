@@ -20,6 +20,8 @@ import { FLOW_SLOTS,blendSettings,createSlotFlow,textureTransform,flipbookAt,nor
 import { exportPreset,importPreset,readControls,applyControlValues } from './preset-workflow.js';
 import { diagnoseMeshes } from './uv-diagnostics.js';
 import { inspectAsset,buildComparison } from './asset-report.js';
+import { SceneGuides, formatPivotReadout } from './scene-guides.js';
+import { resolvePreviewBlend, applyPreviewBlend } from './render-state.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -61,7 +63,7 @@ const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;controls.dampingFactor=.08;controls.screenSpacePanning=true;
 controls.minDistance=.02;controls.maxDistance=40000;
 const grid=new THREE.GridHelper(100,100,0x446578,0x2d3a49);grid.position.y=-1.9;grid.material.opacity=.32;grid.material.transparent=true;scene.add(grid);
-const axes=new THREE.AxesHelper(3);axes.visible=false;scene.add(axes);
+const guides=new SceneGuides(THREE,scene);
 scene.add(new THREE.HemisphereLight(0xe9f7ff,0x3b5367,2.0));
 const key = new THREE.DirectionalLight(0xffffff,3.1);key.position.set(8,12,10);scene.add(key);
 const fill = new THREE.DirectionalLight(0x76b3dd,1.3);fill.position.set(-8,1,-5);scene.add(fill);
@@ -75,7 +77,7 @@ bloomComposer.addPass(new RenderPass(scene,camera));
 const bloomPass=new UnrealBloomPass(new THREE.Vector2(512,512),.8,.2,1);
 bloomPass.enabled=false;bloomComposer.addPass(bloomPass);bloomComposer.addPass(new OutputPass());
 const flowFields={uv:'slotFlowUV',speedX:'slotFlowX',speedY:'slotFlowY',offsetX:'slotOffsetX',offsetY:'slotOffsetY',repeatX:'slotRepeatX',repeatY:'slotRepeatY'};
-const presetFields=['matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
+const presetFields=['matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','toggleAxes','togglePivot','axisSize','pivotScope','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
 function getField(id){return $('#'+id);}
 function downloadJSON(name,data){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}
 function saveSlotFlow(){const values={};for(const [k,id] of Object.entries(flowFields))values[k]=$('#'+id).value;state.slotFlows.set($('#slotFlowSlot').value,createSlotFlow(values));state.offsetsDirty=true;}
@@ -106,22 +108,10 @@ function prepareInspectionAlpha(mesh){
   // Warn in the Inspector rather than treating a missing channel as transparent.
 }
 function applyBlendToMaterial(mat,mode,opacity,cutoff){
-  const cfg=blendSettings(mode,opacity,cutoff,$('#matDepthTest').checked,$('#matDepthWrite').checked,$('#matCull').value);
-  mat.transparent=cfg.transparent;mat.opacity=cfg.opacity;mat.alphaTest=cfg.alphaTest;
-  mat.depthTest=cfg.depthTest;mat.depthWrite=cfg.depthWrite;
-  mat.side=cfg.cull==='double'?THREE.DoubleSide:cfg.cull==='front'?THREE.FrontSide:THREE.BackSide;
-  mat.premultipliedAlpha=cfg.mode==='premultiply';
-  mat.blending={add:THREE.AdditiveBlending,multiply:THREE.MultiplyBlending}[cfg.mode]||THREE.NormalBlending;
-  if(cfg.mode==='premultiply'){
-    mat.blending=THREE.CustomBlending;mat.blendEquation=THREE.AddEquation;
-    mat.blendSrc=THREE.OneFactor;mat.blendDst=THREE.OneMinusSrcAlphaFactor;
-    mat.blendEquationAlpha=THREE.AddEquation;mat.blendSrcAlpha=THREE.OneFactor;mat.blendDstAlpha=THREE.OneMinusSrcAlphaFactor;
-  }else if(cfg.mode==='screen'){
-    mat.blending=THREE.CustomBlending;mat.blendEquation=THREE.AddEquation;
-    mat.blendSrc=THREE.OneFactor;mat.blendDst=THREE.OneMinusSrcColorFactor;
-    mat.blendEquationAlpha=THREE.AddEquation;mat.blendSrcAlpha=THREE.OneFactor;mat.blendDstAlpha=THREE.OneMinusSrcAlphaFactor;
-  }
-  mat.userData.vfxAlphaMode=cfg.mode;mat.needsUpdate=true;
+  const config=resolvePreviewBlend(mode,$('#toggleAlphaOverlay').checked,
+    mat.userData.vfxHasInspectionAlpha,opacity,cutoff,$('#matDepthTest').checked,
+    $('#matDepthWrite').checked,$('#matCull').value);
+  applyPreviewBlend(mat,THREE,config);
 }
 /** Works on both PBR materials and checker/grid, independent of the main view mode. */
 function configureAlphaForMaterial(mesh,material){
@@ -134,6 +124,21 @@ function configureAlphaForMaterial(mesh,material){
   const rgbaColor=(state.originalGeos.get(mesh)||mesh.geometry).getAttribute('color');
   const preConsumed=Boolean(material.vertexColors && rgbaColor?.itemSize>=4);
   const mask=alphaMaskFactor(overlay.active,mode,hasAlpha,preConsumed);
+  // Shader masks handle FBX recovered stand-alone alpha; native RGBA is already
+  // multiplied inside Three's color_fragment shader and must not be squared.
+  material.userData.vfxHasInspectionAlpha=hasAlpha;
+  if(material.userData.vfxAlphaMode!==undefined){
+    applyBlendToMaterial(material,mode,$('#matOpacity').value,$('#matAlphaCutoff').value);
+  } else if(overlay.active && hasAlpha && !material.transparent){
+    // A cloned imported opaque PBR material: opt in to alpha blending without
+    // modifying the source material or discarding existing texture settings.
+    material.transparent=true;material.depthWrite=false;material.blending=THREE.NormalBlending;
+    material.needsUpdate=true;
+    material.userData.vfxAlphaAutoBlend=true;
+  } else if(!overlay.active && material.userData.vfxAlphaAutoBlend){
+    material.transparent=false;material.depthWrite=true;material.blending=THREE.NormalBlending;
+    material.userData.vfxAlphaAutoBlend=false;material.needsUpdate=true;
+  }
   updateAlphaShaderUniforms(material,{mode:overlay.mode,strength:overlay.strength,mask,
     channel:$('#matMaskChannel').value,invert:$('#matMaskInvert').checked});
 }
@@ -257,6 +262,7 @@ function disposeModel(){
   disposeWireHelpers();
   for(const mesh of [...state.previewGeos.keys()])restorePreviewGeometry(mesh);
   state.originalGeos.clear();state.stretchCache.clear();
+  guides.clearPivots();
   const oldOriginals=[...state.originalMats.values()];
   for(const [mesh, cache] of state.debugMats){
     for(const key of ['working','normal','checker','uvgrid','stretch','vertex','neutral','missingAlpha']){
@@ -297,7 +303,7 @@ function disposeModel(){
 }
 function installModel(root,meta={},clips=[]){
   disposeModel();
-  state.model=root;state.model.position.set(0,0,0);
+  state.model=root; // Preserve imported root pivot and translation; do not recenter the asset.
   state.meshes=gatherMeshes(root);state.clips=clips;
   if(!state.meshes.length)status('경고: 불러온 모델에 메시가 없습니다. 포인트/카메라/라인만 포함되었을 수 있습니다.',true);
   for(const [i,mesh] of state.meshes.entries()){
@@ -308,6 +314,7 @@ function installModel(root,meta={},clips=[]){
     if(mesh.geometry && !mesh.geometry.hasAttribute('normal'))mesh.geometry.computeVertexNormals();
   }
   scene.add(root);
+  updateSceneGuides();
   if(clips.length){state.sceneMixer=new THREE.AnimationMixer(root);}
   state.selected=null;state.uvPlaying=false;state.flowPhaseX=state.flowPhaseY=0;state.offsetsDirty=true;
   $('#btnUVPlay').textContent='▶ UV Flow Play';$('#flowOverlay').hidden=true;
@@ -317,7 +324,7 @@ function installModel(root,meta={},clips=[]){
   state.mode='material';updateDisplayMaterial();
   $('#uvDiagnostics').textContent='UV 품질 분석 버튼을 눌러 검사를 시작하세요 (큰 메시에서 시간이 걸릴 수 있습니다).';
   updateVertexAlphaHealth();
-  updateStats();updateHierarchy();updateInspector();updateMaterialSlotSelect();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);
+  updateStats();updateHierarchy();updateInspector();updateMaterialSlotSelect();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);updateSceneGuides();
   const alphaInfo=meta.alphaRecovery;
   status(`${meta.name||'데모 모델'} 준비 완료 · ${fmt(modelStats(state.meshes).triangles)} triangles`+
     (alphaInfo?.restored?` · FBX Vertex Alpha ${alphaInfo.restored} mesh 복구됨`:
@@ -343,8 +350,24 @@ function fitCamera(target){
   camera.position.copy(center).addScaledVector(direction,distance);
   camera.updateProjectionMatrix();controls.target.copy(center);controls.minDistance=Math.max(radius*.02,.001);controls.maxDistance=Math.max(radius*75,1);
   controls.update();
+  updateSceneGuides();
   grid.position.y=box.min.y-Math.max(.008,size.y*.004);
   grid.scale.setScalar(Math.max(.1, Math.min(1000, radius/9)));
+}
+function worldPivotEuler(node){
+  node.updateWorldMatrix(true,false);
+  const q=node.getWorldQuaternion(new THREE.Quaternion());
+  const e=new THREE.Euler().setFromQuaternion(q,'XYZ');
+  return [e.x,e.y,e.z].map(v=>(THREE.MathUtils.radToDeg(v)).toFixed(1)).join('°, ')+'°';
+}
+function updateSceneGuides(){
+  const size=Number($('#axisSize').value)||.35;
+  const showWorld=$('#toggleAxes').checked;
+  const showPivot=$('#togglePivot').checked;
+  const scope=$('#pivotScope').value;
+  guides.configure(state.model,state.meshes,state.selected,{size,showWorld,showPivot,scope});
+  $('#pivotStatus').textContent=state.selected ? `Selected · ${formatPivotReadout(state.selected)}` :
+    state.model ? `${scope==='root'?'Model root':'First mesh'} · ${formatPivotReadout(scope==='root'?state.model:state.meshes[0]||state.model)}` : 'No model';
 }
 function updateStats(){
   const stat=modelStats(state.meshes);
@@ -367,7 +390,7 @@ function updateHierarchy(){
 }
 function compact(n){return n>=1000000?(n/1000000).toFixed(1)+'m':n>=1000?(n/1000).toFixed(1)+'k':String(n);}
 function selectMesh(mesh){
-  state.selected=mesh||null;updateHierarchy();updateInspector();updateVertexAlphaHealth();updateMaterialSlotSelect();updateNormalHelper();updateTangentHelper();
+  state.selected=mesh||null;updateHierarchy();updateInspector();updateVertexAlphaHealth();updateMaterialSlotSelect();updateNormalHelper();updateTangentHelper();updateSceneGuides();
   if($('#applyScope').value==='selected'&&!state.selected)$('#applyScope').value='all';
 }
 function inspected(){return state.selected?[state.selected]:state.meshes;}
@@ -386,7 +409,10 @@ function updateInspector(){
     ['Materials',selected?(Array.isArray(state.originalMats.get(selected))?state.originalMats.get(selected).length:1):[...new Set(meshes.flatMap(m=>{const a=state.originalMats.get(m);return Array.isArray(a)?a:[a];}))].length],
     ['Vertex color',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('color')).length}/${meshes.length} meshes`],
     ['Vertex Alpha (source)',`${meshes.filter(m=>analyzeVertexAlpha(state.originalGeos.get(m)||m.geometry).hasAlpha).length}/${meshes.length} meshes`],
-    ['Tangents',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('tangent')).length}/${meshes.length} meshes`]
+    ['Tangents',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('tangent')).length}/${meshes.length} meshes`],
+    ['Pivot (world)',selected?formatPivotReadout(selected):'Select a mesh'],
+    ['Pivot (local)',selected?selected.position.toArray().map(v=>v.toFixed(3)).join(', '):'—'],
+    ['Pivot rotation XYZ°',selected?worldPivotEuler(selected):'—']
   ];
   const props=$('#inspectProperties');props.replaceChildren();
   for(const [k,v] of entries){const row=document.createElement('div');row.className='property-row';
@@ -576,6 +602,7 @@ function applyMaterialInputs(meshes=scopeMeshes(),changed=null){
     if(!changed||changed==='matDisplacementScale')mat.displacementScale=materialValue('displacementScale',$('#matDisplacementScale').value);
     if(!changed||changed==='matDisplacementBias')mat.displacementBias=materialValue('displacementBias',$('#matDisplacementBias').value);
     if(!changed||['matAlphaMode','matOpacity','matAlphaCutoff','matDepthTest','matDepthWrite','matCull'].includes(changed)){
+      mat.userData.vfxHasInspectionAlpha=Boolean(locateVertexAlpha(state.originalGeos.get(mesh)||mesh.geometry).attribute);
       applyBlendToMaterial(mat,settings.alphaMode,$('#matOpacity').value,$('#matAlphaCutoff').value);
     }
     mat.needsUpdate=true;
@@ -865,7 +892,10 @@ function bindUI(){
     const a=document.createElement('a');a.href=renderer.domElement.toDataURL('image/png');a.download=`maxVFX-View-${Date.now()}.png`;a.click();status('뷰포트 이미지를 저장했습니다.');
   };
   $('#toggleGrid').onchange=e=>grid.visible=e.target.checked;
-  $('#toggleAxes').onchange=e=>axes.visible=e.target.checked;
+  $('#toggleAxes').onchange=updateSceneGuides;
+  $('#togglePivot').onchange=updateSceneGuides;
+  $('#pivotScope').onchange=updateSceneGuides;
+  $('#axisSize').oninput=()=>{$('#valueAxisSize').textContent=Number($('#axisSize').value).toFixed(2);updateSceneGuides();};
   $('#toggleWire').onchange=updateWireframe;
   $('#btnWire').onclick=()=>{$('#toggleWire').checked=!$('#toggleWire').checked;updateWireframe();};
   $('#btnAlphaOverlay').onclick=()=>setAlphaOverlay(!$('#toggleAlphaOverlay').checked);
@@ -956,6 +986,7 @@ function bindUI(){
     const f=e.target.files?.[0];e.target.value='';if(!f)return;
     try{const p=await importPreset(f);applyControlValues(p.ui,getField);
       state.slotFlows=new Map(Object.entries(p.slotFlows));loadSlotFlow();
+      updateSceneGuides();
       state.flowPhaseX=state.flowPhaseY=state.flowSeconds=state.flipbookSeconds=0;
       $('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';
       const targets=scopeMeshes();applyMaterialInputs(targets);updateBloom();setAlphaOverlay($('#toggleAlphaOverlay').checked);state.offsetsDirty=true;
@@ -1030,6 +1061,7 @@ function animate(){
   controls.update();
   state.normalHelper?.update();
   state.tangentHelper?.update();
+  guides.followPivots();
   if(bloomPass.enabled)bloomComposer.render();else renderer.render(scene,camera);
   state.frameCount++;
   const t=performance.now();

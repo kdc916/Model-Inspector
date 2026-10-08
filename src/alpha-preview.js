@@ -1,9 +1,9 @@
 /** Independent vertex-alpha preview for PBR, checker and UV-grid materials. */
-export const ALPHA_OVERLAY_MODES = Object.freeze(['tint','gray','mask']);
+export const ALPHA_OVERLAY_MODES = Object.freeze(['apply','tint','gray','mask']);
 
 export function overlayState(checked, view, strength, hasAlpha, surfaceMode) {
   const active = Boolean(checked && hasAlpha && ['material','checker','uvgrid'].includes(surfaceMode));
-  const mode = ALPHA_OVERLAY_MODES.includes(view) ? view : 'tint';
+  const mode = ALPHA_OVERLAY_MODES.includes(view) ? view : 'apply';
   const opacity = Math.min(1, Math.max(0, Number.isFinite(Number(strength)) ? Number(strength) : 0.55));
   return {
     mode: active ? (mode === 'tint' ? 1 : mode === 'gray' ? 2 : 0) : 0,
@@ -11,9 +11,14 @@ export function overlayState(checked, view, strength, hasAlpha, surfaceMode) {
     active, modeName: mode,
   };
 }
-/** Alpha mask is only used for transparency modes; visual overlay does not hide geometry in Opaque. */
+/** When V.Alpha is on, the original texture should be genuinely transparent even in Opaque preview. */
 export function alphaMaskFactor(active, transparencyMode, hasAlpha, isRGBAAlreadyConsumed = false) {
-  return active && hasAlpha && !isRGBAAlreadyConsumed && ['blend','add','premultiply','multiply','screen','mask'].includes(transparencyMode) ? 1 : 0;
+  return active && hasAlpha && !isRGBAAlreadyConsumed && ['opaque','blend','add','premultiply','multiply','screen','mask'].includes(transparencyMode) ? 1 : 0;
+}
+/** Prefer an actual alpha-blended preview to a false-color overlay when inspecting opaque materials.
+ * The user's explicit advanced blend modes remain respected. */
+export function effectiveAlphaMode(requestedMode, overlayEnabled, hasAlpha) {
+  return overlayEnabled && hasAlpha && requestedMode === 'opaque' ? 'blend' : requestedMode;
 }
 /** Pure function: keep shader patching checks readable and testable. */
 export function overlayShaderSupported(material) {
@@ -57,7 +62,7 @@ export function installAlphaShader(material, THREE) {
        #endif
        diffuseColor.a *= mix(1.0,clamp(vfxAlphaValue,0.0,1.0),vfxAlphaMaskFactor);`);
   };
-  material.customProgramCacheKey = () => `${priorKey()}|maxvfx-alpha-preview-v2`;
+  material.customProgramCacheKey = () => `${priorKey()}|maxvfx-alpha-preview-v3`;
   material.userData.vfxAlphaShader = uniforms;
   material.needsUpdate = true;
 }

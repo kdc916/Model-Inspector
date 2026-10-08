@@ -36,6 +36,7 @@ export function materialSnapshot(form={}) {
     'matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull',
     'matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength',
     'matBloom','matBloomStrength','matBloomRadius','matBloomThreshold',
+    'toggleAxes','togglePivot','axisSize','pivotScope',
     'flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures',
     'slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
   return Object.fromEntries(keys.filter(k=>Object.hasOwn(form,k)).map(k=>[k,form[k]]));
