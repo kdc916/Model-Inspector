@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MATERIAL_RANGES, TEXTURE_SLOTS, materialValue, alphaMaterialSettings, resolveAlphaMode } from '../src/material-controls.js';
+import { MATERIAL_RANGES, TEXTURE_SLOTS, ORM_SLOTS, normalScalePair, scopedMaterialIndices, materialValue, alphaMaterialSettings, resolveAlphaMode } from '../src/material-controls.js';
 import { analyzeVertexAlpha, extractVertexColors } from '../src/mesh-diagnostics.js';
 import { readFileSync } from 'node:fs';
 const attr=(data, itemSize)=>({count:data.length/itemSize,itemSize,getX:i=>data[i*itemSize],getY:i=>data[i*itemSize+1],getZ:i=>data[i*itemSize+2],getW:i=>data[i*itemSize+3]});
@@ -18,11 +18,12 @@ test('missing vertex alpha is different from RGB-only channels',()=>{
   assert.equal(analyzeVertexAlpha(rgb).reason,'rgb-only');
   assert.equal(analyzeVertexAlpha(empty).reason,'missing-color');
   assert.equal(extractVertexColors(empty,'a'),null);
-  assert.deepEqual([...extractVertexColors(rgb,'a')],[1,1,1]);
+  assert.equal(extractVertexColors(rgb,'a'),null);
 });
 test('nonfinite vertex alpha is handled safely',()=>{
   const g=geom([0,0,0],[.7,.7,.7,NaN]);
-  assert.equal(analyzeVertexAlpha(g).average,1);
+  assert.equal(analyzeVertexAlpha(g).average,null);
+  assert.equal(analyzeVertexAlpha(g).reason,'invalid-alpha');
 });
 test('material values clamp ranges and reject invalid input',()=>{
   assert.equal(materialValue('normalStrength',10),2);
@@ -50,5 +51,23 @@ test('all texture slots are unique and mapped into UI',()=>{
     'matColor','matBaseStrength','matNormalStrength','matAOIntensity','matEmissiveIntensity',
     'matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff']){
     assert.ok(html.includes(`id="${id}"`),`Missing ${id}`);
+  }
+});
+
+test('ORM packed channel mapping and normal green inversion use stable PBR conventions',()=>{
+  assert.deepEqual([...ORM_SLOTS],['aoMap','roughnessMap','metalnessMap']);
+  assert.deepEqual(normalScalePair(1.25,false),[1.25,1.25]);
+  assert.deepEqual(normalScalePair(1.25,true),[1.25,-1.25]);
+  assert.deepEqual(scopedMaterialIndices(3,-1),[0,1,2]);
+  assert.deepEqual(scopedMaterialIndices(3,1),[1]);
+  assert.deepEqual(scopedMaterialIndices(3,99),[]);
+  assert.deepEqual(scopedMaterialIndices(3,NaN),[0,1,2]);
+});
+test('v0.4.0 controls referenced in HTML and app code',()=>{
+  const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+  const app=readFileSync(new URL('../src/app.js',import.meta.url),'utf8');
+  for(const id of ['alphaViewportAlert','btnAlphaReport','ormInput','ormFileName','matNormalFlipGreen','matSlotIndex']){
+    assert.ok(html.includes(`id="${id}"`),`Missing HTML ${id}`);
+    assert.ok(app.includes(`#${id}`),`Missing app binding ${id}`);
   }
 });

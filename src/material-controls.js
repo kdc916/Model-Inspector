@@ -17,3 +17,14 @@ export function alphaMaterialSettings(mode,opacity,cutoff){
   return {transparent:kind==='blend'||(kind==='opaque'&&factor<1),alphaTest:kind==='mask'?materialValue('alphaCutoff',cutoff):0,
     opacity:factor,depthWrite:kind!=='blend',alphaMode:kind};
 }
+
+/** Three.js MeshStandardMaterial uses AO=R, Roughness=G, Metalness=B. */
+export const ORM_SLOTS=Object.freeze(['aoMap','roughnessMap','metalnessMap']);
+export function normalScalePair(strength,flipGreen=false){
+  const v=materialValue('normalStrength',strength);
+  return [v, flipGreen?-v:v];
+}
+export function scopedMaterialIndices(total,selected){
+  if(!Number.isInteger(selected)||selected<0)return Array.from({length:Math.max(0,total)},(_,i)=>i);
+  return selected<total?[selected]:[];
+}

@@ -9,7 +9,7 @@ import { createDemo, makeCheckerTexture } from './procedural.js';
 import { drawUVLayout, inspectMeshes } from './analysis.js';
 import { finite, modelStats, textureOffsetFromVisual, triangleCount } from './uv-utils.js';
 import { analyzeUVStretch, extractVertexColors, analyzeVertexAlpha } from './mesh-diagnostics.js';
-import { TEXTURE_SLOTS, materialValue, alphaMaterialSettings } from './material-controls.js';
+import { TEXTURE_SLOTS, ORM_SLOTS, normalScalePair, scopedMaterialIndices, materialValue, alphaMaterialSettings } from './material-controls.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -128,7 +128,8 @@ function updateDisplayMaterial(){
       // A missing attribute is treated as neutral gray in the preview.
       if(!state.previewGeos.has(mesh)){
         if(!cache.neutral)cache.neutral=new THREE.MeshBasicMaterial({color:0x59616c,side:THREE.DoubleSide});
-        assignDebugMaterial(mesh,cache.neutral);
+        if(!cache.missingAlpha)cache.missingAlpha=new THREE.MeshBasicMaterial({color:0xff6aad,side:THREE.DoubleSide,toneMapped:false});
+        assignDebugMaterial(mesh,(state.mode==='alpha'||(state.mode==='vertex'&&$('#vertexChannel').value==='a'))?cache.missingAlpha:cache.neutral);
       } else assignDebugMaterial(mesh,cache[key]);
     } else {
       const name=state.mode;
@@ -148,6 +149,7 @@ function updateDisplayMaterial(){
   $('#diagnosticLegend').hidden=state.mode!=='stretch';
   $('#vertexOptions').hidden=state.mode!=='vertex';
   $('#alphaLegend').hidden=state.mode!=='alpha';
+  refreshAlphaViewportWarning();
   applyTextureParameters();
 }
 function setMode(mode){state.mode=mode;updateDisplayMaterial();}
@@ -162,7 +164,7 @@ function disposeModel(){
   state.originalGeos.clear();state.stretchCache.clear();
   const oldOriginals=[...state.originalMats.values()];
   for(const [mesh, cache] of state.debugMats){
-    for(const key of ['working','normal','checker','uvgrid','stretch','vertex','neutral']){
+    for(const key of ['working','normal','checker','uvgrid','stretch','vertex','neutral','missingAlpha']){
       const mats=cache[key] ? (Array.isArray(cache[key])?cache[key]:[cache[key]]) : [];
       for(const mat of mats){
         if(key==='checker'||key==='uvgrid')mat.map?.dispose();
@@ -216,7 +218,7 @@ function installModel(root,meta={},clips=[]){
   $('#assetMeta').textContent=`${meta.format||'DEMO'} · ${state.meshes.length} meshes`;
   state.mode='material';updateDisplayMaterial();
   updateVertexAlphaHealth();
-  updateStats();updateHierarchy();updateInspector();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);
+  updateStats();updateHierarchy();updateInspector();updateMaterialSlotSelect();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);
   status(`${meta.name||'데모 모델'} 준비 완료 · ${fmt(modelStats(state.meshes).triangles)} triangles`);
 }
 function fitCamera(target){
@@ -262,7 +264,7 @@ function updateHierarchy(){
 }
 function compact(n){return n>=1000000?(n/1000000).toFixed(1)+'m':n>=1000?(n/1000).toFixed(1)+'k':String(n);}
 function selectMesh(mesh){
-  state.selected=mesh||null;updateHierarchy();updateInspector();updateVertexAlphaHealth();updateNormalHelper();updateTangentHelper();
+  state.selected=mesh||null;updateHierarchy();updateInspector();updateVertexAlphaHealth();updateMaterialSlotSelect();updateNormalHelper();updateTangentHelper();
   if($('#applyScope').value==='selected'&&!state.selected)$('#applyScope').value='all';
 }
 function inspected(){return state.selected?[state.selected]:state.meshes;}
@@ -280,7 +282,7 @@ function updateInspector(){
     ['Dimensions',dims?[dims.x,dims.y,dims.z].map(v=>v.toFixed(3)).join(' × '):'—'],
     ['Materials',selected?(Array.isArray(state.originalMats.get(selected))?state.originalMats.get(selected).length:1):[...new Set(meshes.flatMap(m=>{const a=state.originalMats.get(m);return Array.isArray(a)?a:[a];}))].length],
     ['Vertex color',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('color')).length}/${meshes.length} meshes`],
-    ['Vertex Alpha (RGBA)',`${meshes.filter(m=>(state.originalGeos.get(m)||m.geometry).getAttribute('color')?.itemSize>=4).length}/${meshes.length} meshes`],
+    ['Vertex Alpha (source)',`${meshes.filter(m=>analyzeVertexAlpha(state.originalGeos.get(m)||m.geometry).hasAlpha).length}/${meshes.length} meshes`],
     ['Tangents',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('tangent')).length}/${meshes.length} meshes`]
   ];
   const props=$('#inspectProperties');props.replaceChildren();
@@ -317,21 +319,44 @@ function updateInspector(){
   const result=drawUVLayout($('#uvCanvas'),meshes,state.uvChannel);
   $('#uvStatus').textContent=`UV${state.uvChannel}`+(result?.skippedFaces?' · simplified':'');
 }
+function formatAlphaReport(reports,meshes){
+  const valid=reports.filter(r=>r.hasAlpha && r.sampled);
+  const missing=reports.filter(r=>!r.hasAlpha);
+  if(!valid.length) return `⛔ Alpha 데이터 없음 (${missing.length}/${meshes.length} mesh). RGB만 있는 메시를 A=1(흰색)으로 대체하지 않습니다. FBX Export의 Vertex Colors 설정과 3ds Max Vertex Alpha(-2) 채널을 확인하세요.`;
+  const n=valid.reduce((a,r)=>a+r.sampled,0);
+  const sum=valid.reduce((a,r)=>a+r.average*r.sampled,0);
+  const lo=Math.min(...valid.map(r=>r.min)),hi=Math.max(...valid.map(r=>r.max));
+  const black=valid.reduce((a,r)=>a+r.zero,0);
+  const mid=valid.reduce((a,r)=>a+r.partial,0);
+  const white=valid.reduce((a,r)=>a+r.opaque,0);
+  const opaqueMeshes=valid.filter(r=>r.reason==='all-white').length;
+  const base=`Vertex Alpha ${valid.length}/${meshes.length} meshes · min ${lo.toFixed(3)} / max ${hi.toFixed(3)} / avg ${(sum/n).toFixed(3)} · black ${fmt(black)}, gray ${fmt(mid)}, white ${fmt(white)} (sample ${fmt(n)})`;
+  const notes=[];
+  if(missing.length)notes.push(`⚠ ${missing.length} mesh Alpha 미포함(핑크 표시)`);
+  if(opaqueMeshes)notes.push(`⚠ ${opaqueMeshes} mesh A 채널은 있으나 전부 1.0(흰색). 3ds Max 값이 FBX로 실제 전달됐는지 확인`);
+  return base+(notes.length?' · '+notes.join(' · '):'');
+}
+function refreshAlphaViewportWarning(){
+  const el=$('#alphaViewportAlert');
+  if(!el)return;
+  const alphaActive=state.mode==='alpha'||(state.mode==='vertex'&&$('#vertexChannel').value==='a');
+  const meshes=inspected();
+  const reports=meshes.map(m=>analyzeVertexAlpha(state.originalGeos.get(m)||m.geometry));
+  const missing=reports.filter(r=>!r.hasAlpha).length;
+  const fullWhite=reports.filter(r=>r.reason==='all-white').length;
+  el.hidden=!alphaActive||(!missing&&!fullWhite);
+  if(el.hidden)return;
+  el.textContent=missing
+    ?`⚠ Vertex Alpha 누락: ${missing}/${meshes.length} mesh · 핑크 표시는 알파 채널 미포함(RGB만 있거나 색상 없음)`
+    :`⚠ RGBA는 있으나 ${fullWhite}/${meshes.length} mesh의 A값이 전부 1.0입니다. 원본 FBX를 확인하세요.`;
+}
 function updateVertexAlphaHealth(){
   const meshes=inspected();
   const reports=meshes.map(m=>analyzeVertexAlpha(state.originalGeos.get(m)||m.geometry));
-  const actual=reports.filter(r=>r.hasAlpha);
-  const rgb=reports.filter(r=>r.reason==='rgb-only').length;
-  const missing=reports.filter(r=>r.reason==='missing-color').length;
-  const el=$('#vertexAlphaHealth');
-  if(!actual.length){
-    el.textContent=`Vertex Alpha 없음 · RGB만 ${rgb} meshes · Vertex Color 없음 ${missing} meshes. RGBA 색상 데이터를 포함하여 내보내세요.`;
-    return;
-  }
-  let n=0,sum=0,min=1,max=0,zero=0,partial=0,opaque=0;
-  for(const r of actual){n+=r.sampled;sum+=r.average*r.sampled;min=Math.min(min,r.min);max=Math.max(max,r.max);zero+=r.zero;partial+=r.partial;opaque+=r.opaque;}
-  el.textContent=`RGBA ${actual.length}/${meshes.length} meshes · Alpha min ${min.toFixed(3)}, max ${max.toFixed(3)}, avg ${(sum/Math.max(n,1)).toFixed(3)} · transparent ${fmt(zero)}, partial ${fmt(partial)}, opaque ${fmt(opaque)} (sampled vertices ${fmt(n)})${rgb||missing?` · RGB only ${rgb} / no color ${missing}`:''}`;
+  $('#vertexAlphaHealth').textContent=formatAlphaReport(reports,meshes);
+  refreshAlphaViewportWarning();
 }
+
 function updateAnimSelect(){
   const sel=$('#animationSelect');sel.replaceChildren();
   if(!state.clips.length){const option=new Option('No animation','');sel.add(option);sel.disabled=true;$('#btnAnimToggle').disabled=true;return;}
@@ -388,7 +413,23 @@ function updateTangentHelper(){
   state.tangentHelper=new VertexTangentsHelper(mesh,Math.max(.002,length/120),0xf2b079);
   scene.add(state.tangentHelper);
 }
-function scopeMeshes(){return $('#applyScope').value==='selected'&&state.selected?[state.selected]:state.meshes;}
+function scopeMeshes(){return $('#applyScope').value==='selected'?(state.selected?[state.selected]:[]):state.meshes;}
+function updateMaterialSlotSelect(){
+  const control=$('#matSlotIndex');if(!control)return;
+  const previous=control.value;
+  control.replaceChildren(new Option('All material IDs','all'));
+  const selected=state.selected;
+  const count=selected?(Array.isArray(state.originalMats.get(selected))?state.originalMats.get(selected).length:1):0;
+  for(let i=0;i<count;i++)control.add(new Option(`Material ID ${i}`,String(i)));
+  control.disabled=$('#applyScope').value!=='selected'||!selected||count<2;
+  control.value=[...control.options].some(o=>o.value===previous)?previous:'all';
+}
+function scopedMaterials(mesh){
+  const mats=makeWorkingMaterials(mesh);
+  const slot=$('#applyScope').value==='selected' && mesh===state.selected && !$('#matSlotIndex').disabled ? Number($('#matSlotIndex').value): -1;
+  return scopedMaterialIndices(mats.length,slot).map(i=>mats[i]);
+}
+
 function makeWorkingMaterials(mesh){
   const cache=state.debugMats.get(mesh)||{};
   if(!cache.working){const source=state.originalMats.get(mesh);
@@ -412,34 +453,27 @@ function uniqueTextureForMaterial(material,slot){
   }
   return material[slot];
 }
-/** Apply material overrides only to targets: imported materials remain immutable. */
-function applyMaterialInputs(meshes=scopeMeshes()){
-  const controls={
-    baseStrength:materialValue('baseStrength',$('#matBaseStrength').value),
-    roughness:materialValue('roughness',$('#matRough').value),
-    metalness:materialValue('metalness',$('#matMetal').value),
-    normalStrength:materialValue('normalStrength',$('#matNormalStrength').value),
-    aoMapIntensity:materialValue('aoMapIntensity',$('#matAOIntensity').value),
-    emissiveIntensity:materialValue('emissiveIntensity',$('#matEmissiveIntensity').value),
-    bumpScale:materialValue('bumpScale',$('#matBumpScale').value),
-    displacementScale:materialValue('displacementScale',$('#matDisplacementScale').value),
-    displacementBias:materialValue('displacementBias',$('#matDisplacementBias').value),
-  };
+/** Independent working materials per mesh; changing one slider never wipes other imported values. */
+function applyMaterialInputs(meshes=scopeMeshes(),changed=null){
   const settings=alphaMaterialSettings($('#matAlphaMode').value,$('#matOpacity').value,$('#matAlphaCutoff').value);
-  const tint=new THREE.Color($('#matColor').value).multiplyScalar(controls.baseStrength);
-  const emissive=new THREE.Color($('#matEmissiveColor').value);
-  for(const mesh of meshes)for(const mat of makeWorkingMaterials(mesh)){
-    mat.color.copy(tint);
-    mat.roughness=controls.roughness;mat.metalness=controls.metalness;
-    mat.normalScale.setScalar(controls.normalStrength);
-    mat.aoMapIntensity=controls.aoMapIntensity;
-    mat.emissive.copy(emissive);mat.emissiveIntensity=controls.emissiveIntensity;
-    mat.bumpScale=controls.bumpScale;
-    mat.displacementScale=controls.displacementScale;
-    mat.displacementBias=controls.displacementBias;
-    mat.transparent=settings.transparent;
-    mat.opacity=settings.opacity;mat.alphaTest=settings.alphaTest;
-    mat.depthWrite=settings.depthWrite;
+  const normalScale=normalScalePair($('#matNormalStrength').value,$('#matNormalFlipGreen').checked);
+  for(const mesh of meshes)for(const mat of scopedMaterials(mesh)){
+    if(!changed||changed==='matColor'||changed==='matBaseStrength'){
+      mat.color.set($('#matColor').value).multiplyScalar(materialValue('baseStrength',$('#matBaseStrength').value));
+    }
+    if(!changed||changed==='matRough')mat.roughness=materialValue('roughness',$('#matRough').value);
+    if(!changed||changed==='matMetal')mat.metalness=materialValue('metalness',$('#matMetal').value);
+    if(!changed||changed==='matNormalStrength'||changed==='matNormalFlipGreen')mat.normalScale.set(...normalScale);
+    if(!changed||changed==='matAOIntensity')mat.aoMapIntensity=materialValue('aoMapIntensity',$('#matAOIntensity').value);
+    if(!changed||changed==='matEmissiveColor')mat.emissive.set($('#matEmissiveColor').value);
+    if(!changed||changed==='matEmissiveIntensity')mat.emissiveIntensity=materialValue('emissiveIntensity',$('#matEmissiveIntensity').value);
+    if(!changed||changed==='matBumpScale')mat.bumpScale=materialValue('bumpScale',$('#matBumpScale').value);
+    if(!changed||changed==='matDisplacementScale')mat.displacementScale=materialValue('displacementScale',$('#matDisplacementScale').value);
+    if(!changed||changed==='matDisplacementBias')mat.displacementBias=materialValue('displacementBias',$('#matDisplacementBias').value);
+    if(!changed||changed==='matAlphaMode'||changed==='matOpacity'||changed==='matAlphaCutoff'){
+      mat.transparent=settings.transparent;mat.opacity=settings.opacity;
+      mat.alphaTest=settings.alphaTest;mat.depthWrite=settings.depthWrite;
+    }
     mat.needsUpdate=true;
   }
   if(state.mode==='material')updateDisplayMaterial();
@@ -507,7 +541,7 @@ async function applyUpload(slot,file){
   tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
   const targets=scopeMeshes();
   for(const mesh of targets){
-    const mats=makeWorkingMaterials(mesh);
+    const mats=scopedMaterials(mesh);
     for(const mat of mats){
       const previous=mat[slot];
       const own=tex.clone();own.needsUpdate=true;state.editableTextures.add(own);
@@ -522,15 +556,46 @@ async function applyUpload(slot,file){
   const element=$(`.texture-slot[data-slot="${slot}"]`);
   element.classList.add('loaded');element.querySelector('small').textContent=file.name;
   state.slotFiles.set(slot,file.name);
-  applyMaterialInputs(targets);
+  if(slot==='alphaMap')applyMaterialInputs(targets,'matAlphaMode');
   state.offsetsDirty=true;applyTextureParameters();setMode('material');
   status(`${file.name} → ${slot} (${targets.length} meshes) 적용`);
+}
+async function uploadORM(file){
+  if(!file||!state.meshes.length){status('먼저 모델을 불러오세요.',true);return;}
+  if(!file.type.startsWith('image/')&&!/\.(png|jpe?g|bmp|webp|gif|avif|tga|dds)$/i.test(file.name)){
+    status('ORM 입력 형식이 지원되지 않습니다.',true);return;
+  }
+  const generation=state.loadGeneration;
+  const url=URL.createObjectURL(file);state.uploadedURLs.push(url);
+  const loader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():new THREE.TextureLoader();
+  let source;
+  try{source=await loader.loadAsync(url);}catch(e){status('ORM 로딩 실패: '+e.message,true);return;}
+  if(generation!==state.loadGeneration){source.dispose();return;}
+  source.colorSpace=THREE.NoColorSpace;source.flipY=$('#flipTextureY').checked;
+  source.wrapS=source.wrapT=THREE.RepeatWrapping;
+  const targets=scopeMeshes();
+  for(const mesh of targets)for(const mat of scopedMaterials(mesh)){
+    for(const slot of ORM_SLOTS){
+      const prev=mat[slot];
+      const tex=source.clone();tex.needsUpdate=true;tex.channel=state.uvChannel;
+      state.editableTextures.add(tex);mat[slot]=tex;
+      if(prev&&state.editableTextures.has(prev))prev.dispose();
+      const el=$(`.texture-slot[data-slot="${slot}"]`);
+      el.classList.add('loaded');el.querySelector('small').textContent=`ORM: ${file.name}`;
+      state.slotFiles.set(slot,file.name);
+    }
+    mat.needsUpdate=true;
+  }
+  source.dispose();
+  $('#ormFileName').textContent=file.name+' · R=AO / G=Roughness / B=Metallic';
+  state.offsetsDirty=true;applyTextureParameters();setMode('material');
+  status(`${file.name} ORM 적용 완료 (${targets.length} meshes)`);
 }
 function clearTextureSlot(slot){
   if(!slotNames.includes(slot))return;
   for(const mesh of scopeMeshes()){
     const cache=state.debugMats.get(mesh);if(!cache?.working)continue;
-    for(const mat of (Array.isArray(cache.working)?cache.working:[cache.working])){
+    for(const mat of scopedMaterials(mesh)){
       const tex=mat[slot];if(tex&&state.editableTextures.has(tex))tex.dispose();
       mat[slot]=null;mat.needsUpdate=true;
     }
@@ -548,7 +613,7 @@ function resetMaterialUI(){
     if(output)output.textContent=Number(control.value).toFixed(2);
   }
   $('#matColor').value='#ffffff';$('#matEmissiveColor').value='#ffffff';
-  $('#matAlphaMode').value='opaque';$('#matAlphaCutoff').disabled=true;
+  $('#matAlphaMode').value='opaque';$('#matAlphaCutoff').disabled=true;$('#matNormalFlipGreen').checked=false;
 }
 function resetMaterials(){
   for(const mesh of scopeMeshes()){
@@ -564,7 +629,7 @@ function resetMaterials(){
     if(state.mode==='material')mesh.material=state.originalMats.get(mesh);
   }
   $$('.texture-slot').forEach(el=>{el.classList.remove('loaded');el.querySelector('small').textContent='Upload image';});
-  state.slotFiles.clear();resetMaterialUI();
+  state.slotFiles.clear();resetMaterialUI();$('#ormFileName').textContent='Not loaded';
   state.visualOffsetX=state.visualOffsetY=0;state.flowPhaseX=state.flowPhaseY=0;
   $('#offsetX').value=0;$('#offsetY').value=0;
   state.uvPlaying=false;$('#btnUVPlay').textContent='▶ UV Flow Play';$('#flowOverlay').hidden=true;
@@ -607,6 +672,23 @@ function bindUI(){
   // Keep browser's default open-file behavior out of the viewport on accidental drops.
   window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>e.preventDefault());
   $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
+  $('#btnAlphaReport').onclick=()=>{
+    const inspectedMeshes=inspected();
+    const report={tool:'maxVFX Model Inspector',version:'0.4.0',asset:$('#assetTitle').textContent,
+      warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
+      meshes:inspectedMeshes.map(mesh=>{
+        const geo=state.originalGeos.get(mesh)||mesh.geometry;
+        const c=geo.getAttribute('color'),a=geo.getAttribute('alpha');
+        return {name:mesh.name,vertices:geo.getAttribute('position')?.count||0,
+          colorItemSize:c?.itemSize||0,colorArrayType:c?.array?.constructor?.name||null,
+          colorNormalized:c?.normalized||false,standaloneAlphaItemSize:a?.itemSize||0,
+          alpha:analyzeVertexAlpha(geo)};
+      })};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+    const link=document.createElement('a');link.href=url;link.download='maxVFX-vertex-alpha-report.json';link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+    status('Vertex Alpha 진단 JSON 저장 완료');
+  };
   $$('.tool[data-mode]').forEach(button=>button.onclick=()=>setMode(button.dataset.mode));
   $$('.right-tab').forEach(b=>b.onclick=()=>{
     $$('.right-tab').forEach(tab=>tab.classList.toggle('active',tab===b));
@@ -628,7 +710,7 @@ function bindUI(){
   for(const id of ['wireOpacity','wireColor','wireXray'])$('#'+id).addEventListener('input',updateWireStyle);
   $('#toggleNormals').onchange=updateNormalHelper;
   $('#toggleTangents').onchange=updateTangentHelper;
-  $('#vertexChannel').onchange=()=>{if(state.mode==='vertex')updateDisplayMaterial();};
+  $('#vertexChannel').onchange=()=>{if(state.mode==='vertex')updateDisplayMaterial();refreshAlphaViewportWarning();};
   $('#toggleRotate').onchange=e=>controls.autoRotate=e.target.checked;
   $('#toggleDoubleSide').onchange=e=>{
     for(const mesh of state.meshes){
@@ -671,13 +753,16 @@ function bindUI(){
   $$('[data-texture]').forEach(el=>el.addEventListener('change',e=>{
     applyUpload(e.target.dataset.texture,e.target.files?.[0]);e.target.value='';
   }));
+  $('#ormInput').addEventListener('change',e=>{uploadORM(e.target.files?.[0]);e.target.value='';});
   const matOutputs={matBaseStrength:'valueBaseStrength',matRough:'valueRough',matMetal:'valueMetal',matNormalStrength:'valueNormalStrength',matAOIntensity:'valueAOIntensity',matEmissiveIntensity:'valueEmissiveIntensity',matBumpScale:'valueBumpScale',matDisplacementScale:'valueDisplacementScale',matDisplacementBias:'valueDisplacementBias',matOpacity:'valueOpacity',matAlphaCutoff:'valueAlphaCutoff'};
   for(const [id,out] of Object.entries(matOutputs))$('#'+id).addEventListener('input',e=>{
-    $('#'+out).textContent=Number(e.target.value).toFixed(2);applyMaterialInputs();
+    $('#'+out).textContent=Number(e.target.value).toFixed(2);applyMaterialInputs(scopeMeshes(),id);
   });
-  for(const id of ['matColor','matEmissiveColor'])$('#'+id).addEventListener('input',()=>applyMaterialInputs());
-  $('#matAlphaMode').addEventListener('change',()=>{$('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';applyMaterialInputs();});
-  $('#applyScope').addEventListener('change',()=>status('Apply to 범위 변경 · 이후 텍스처/수치 편집에 적용됩니다.'));
+  for(const id of ['matColor','matEmissiveColor'])$('#'+id).addEventListener('input',()=>applyMaterialInputs(scopeMeshes(),id));
+  $('#matNormalFlipGreen').addEventListener('change',()=>applyMaterialInputs(scopeMeshes(),'matNormalFlipGreen'));
+  $('#matAlphaMode').addEventListener('change',()=>{$('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';applyMaterialInputs(scopeMeshes(),'matAlphaMode');});
+  $('#applyScope').addEventListener('change',()=>{updateMaterialSlotSelect();status('Apply to 범위 변경 · 이후 텍스처/수치 편집에 적용됩니다.');});
+  $('#matSlotIndex').addEventListener('change',()=>status('Material ID 범위 변경 · 이후 편집부터 적용됩니다.'));
   $$('.texture-slot').forEach(label=>{
     const close=document.createElement('button');close.type='button';close.className='slot-clear';close.textContent='×';close.title='Remove '+label.dataset.slot;
     close.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();clearTextureSlot(label.dataset.slot);});

@@ -40,7 +40,7 @@ test('RGB and alpha vertex channels display expected grayscale',()=>{
  assert.deepEqual([...a].map(x=>+x.toFixed(2)),[.75,.75,.75,.1,.1,.1]);
  const rgb=extractVertexColors(g,'rgb');assert.equal(rgb.length,6);
 });
-test('missing alpha in RGB colors is treated as opaque',()=>{
+test('missing alpha in RGB colors is not faked as opaque',()=>{
  const g=geometry([0,0,0],[0,0],null,[.2,.4,.6]);
- assert.deepEqual([...extractVertexColors(g,'a')],[1,1,1]);
+ assert.equal(extractVertexColors(g,'a'),null);
 });

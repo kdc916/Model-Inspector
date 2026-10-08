@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.3.0</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.4.0</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -48,7 +48,8 @@
       <div class="viewport-wait" id="loading"><div class="loader-ring"></div><strong>3D 엔진 준비 중</strong><small>Three.js 모듈을 불러오고 있습니다.</small></div>
       <div class="hud top-left"><span class="hud-title" id="assetTitle">DEMO / VFX STUDY</span><span id="assetMeta">Perspective · Orbit</span></div>
       <div class="hud top-right" id="viewModeHud">PBR / MATERIAL</div>
-      <div class="alpha-legend" id="alphaLegend" hidden><strong>VERTEX ALPHA</strong><div class="alpha-gradient"></div><span>Black 0 · Transparent</span><span>White 1 · Opaque</span></div>
+      <div class="alpha-viewport-alert" id="alphaViewportAlert" hidden></div>
+      <div class="alpha-legend" id="alphaLegend" hidden><strong>VERTEX ALPHA</strong><div class="alpha-gradient"></div><span>Black 0 · Transparent</span><span>White 1 · Opaque</span><span>Pink = A channel missing</span></div>
       <div class="heat-legend" id="diagnosticLegend" hidden><strong>UV STRETCH</strong><div class="heat-gradient"></div><span>Blue · Dense UV</span><span>Green · Median</span><span>Red · Stretched</span></div>
       <div class="flow-overlay" id="flowOverlay" hidden><span class="flow-arrow" id="flowArrow">↗</span><span>UV FLOW</span><small id="flowVector">X +0.25 · Y +0.00</small></div>
       <div class="hud bottom-left">LMB Orbit <b>·</b> RMB Pan <b>·</b> Scroll Zoom <b>·</b> Click Select</div>
@@ -69,6 +70,8 @@
         <div class="uv-health" id="uvHealth">모델의 UV 상태를 분석합니다.</div><div class="diagnostic-result" id="stretchHealth" aria-live="polite">UV stretch 검사 준비 중</div>
         <div class="field" id="vertexOptions" hidden><label for="vertexChannel">Vertex RGBA visualization</label><select id="vertexChannel"><option value="rgb">RGB combined</option><option value="r">Red</option><option value="g">Green</option><option value="b">Blue</option><option value="a">Alpha (grayscale)</option></select></div>
         <div class="diagnostic-result" id="vertexAlphaHealth">Vertex Alpha 채널을 검사합니다.</div>
+        <button class="subtle full" id="btnAlphaReport">⇩ Vertex Alpha 진단 리포트 (.json)</button>
+        <div class="note small-note">3ds Max의 Vertex Alpha는 Map Channel -2입니다. FBX에서 RGB만 들어오면 알파를 1로 만들지 않고 핑크색으로 표시합니다. 흰색으로만 나타나면 보고서에서 'A 채널 미포함'과 'A=1.0'을 구분하세요.</div>
         <div class="section-title separated"><span>WIREFRAME</span></div>
         <div class="description">모델 재질 위에 와이어를 겹쳐 표시합니다. X-Ray에서는 뒤쪽의 와이어도 보입니다.</div>
         <div class="field"><label for="wireOpacity">Wire opacity <output id="valueWireOpacity">0.90</output></label><input id="wireOpacity" type="range" min="0.10" max="1" step="0.05" value="0.9"></div>
@@ -100,6 +103,9 @@
       <section class="tabpage" id="page-material">
         <div class="section-title"><span>MATERIAL OVERRIDE</span><span class="chip">PBR</span></div>
         <div class="field"><label for="applyScope">Apply to</label><select id="applyScope"><option value="all">All meshes</option><option value="selected">Selected mesh only</option></select></div>
+        <div class="field"><label for="matSlotIndex">Material ID (selected mesh)</label><select id="matSlotIndex" disabled><option value="all">All material IDs</option></select></div>
+        <div class="note small-note">Selected mesh + Material ID를 지정하면 해당 서브 머티리얼만 편집합니다. 전체 범위는 기존처럼 모든 메시·재질에 적용합니다.</div>
+        <label class="orm-upload" for="ormInput"><strong>⇧ Packed ORM 텍스처 불러오기</strong><span>AO = R · Roughness = G · Metallic = B</span><small id="ormFileName">Not loaded</small><input id="ormInput" type="file" accept="image/*,.tga,.dds" hidden></label>
         <div class="texture-grid">
           <label class="texture-slot" data-slot="map"><input type="file" accept="image/*,.tga,.dds" data-texture="map"><span class="texture-icon">▧</span><strong>Base Color</strong><small>Upload image</small></label>
           <label class="texture-slot" data-slot="normalMap"><input type="file" accept="image/*,.tga,.dds" data-texture="normalMap"><span class="texture-icon normal-icon">◒</span><strong>Normal</strong><small>Upload image</small></label>
@@ -119,6 +125,7 @@
         <div class="field"><label for="matMetal">Metallic factor <output id="valueMetal">0.00</output></label><input type="range" id="matMetal" min="0" max="1" step="0.01" value="0"></div>
         <div class="section-title separated"><span>MAP STRENGTH</span></div>
         <div class="field"><label for="matNormalStrength">Normal strength <output id="valueNormalStrength">1.00</output></label><input id="matNormalStrength" type="range" min="-2" max="2" step="0.05" value="1"></div>
+        <label class="check material-check"><input id="matNormalFlipGreen" type="checkbox"> Normal Map Green (Y) 반전 · DirectX / OpenGL 비교</label>
         <div class="field"><label for="matAOIntensity">AO intensity <output id="valueAOIntensity">1.00</output></label><input id="matAOIntensity" type="range" min="0" max="3" step="0.05" value="1"></div>
         <div class="field"><label for="matEmissiveIntensity">Emissive intensity <output id="valueEmissiveIntensity">1.00</output></label><input id="matEmissiveIntensity" type="range" min="0" max="15" step="0.1" value="1"></div>
         <div class="field"><label for="matEmissiveColor">Emissive tint</label><input type="color" id="matEmissiveColor" value="#ffffff"></div>
@@ -139,7 +146,7 @@
 </div>
 <input id="fileInput" type="file" multiple accept=".glb,.gltf,.fbx,.obj,.mtl,.stl,.ply,.3ds,.dae,.3mf,.blend,.max,.bin,.png,.jpg,.jpeg,.webp,.tga,.dds,.ktx2,.bmp" hidden />
 <input id="folderInput" type="file" multiple webkitdirectory directory hidden />
-<dialog id="helpDialog"><div class="modal-header"><strong>maxVFX Model Inspector</strong><button id="btnHelpClose" class="ghost" aria-label="닫기">✕</button></div><div class="modal-body"><h3>시작하기</h3><p>모델을 드래그하거나 <b>모델 열기</b>로 불러옵니다. glTF(.gltf)와 OBJ(.obj)는 이미지, .bin, .mtl 등 관련 파일을 함께 선택하거나 폴더 전체 선택을 이용하세요.</p><h3>UV / 텍스처 검사</h3><p>Checker/UV Grid/UV Stretch/Vertex RGB/Vertex Alpha를 전환하여 데이터를 검사하고, <b>UV & Flow</b>에서 X/Y 속도를 조절하세요. +X는 화면의 텍스처가 U+ 방향으로, +Y는 V+ 방향으로 이동하도록 보정합니다.</p><h3>Blender / 3ds Max</h3><p><b>.blend</b>와 <b>.max</b>는 브라우저에서 직접 해석할 수 없습니다. Blender는 File → Export → glTF 2.0 (.glb), 3ds Max는 Export → FBX로 변환한 후 불러오세요. 동봉된 Blender 일괄 변환 스크립트도 사용할 수 있습니다.</p><h3>단축 사용법</h3><p>좌클릭 회전 · 우클릭 패닝 · 휠 줌 · 메시 클릭하여 선택 · Fit으로 화면 맞춤. 원본 모델은 서버로 업로드되지 않습니다. 외부 라이브러리 로딩을 위해 인터넷 연결은 필요합니다.</p></div></dialog>
+<dialog id="helpDialog"><div class="modal-header"><strong>maxVFX Model Inspector</strong><button id="btnHelpClose" class="ghost" aria-label="닫기">✕</button></div><div class="modal-body"><h3>시작하기</h3><p>모델을 드래그하거나 <b>모델 열기</b>로 불러옵니다. glTF(.gltf)와 OBJ(.obj)는 이미지, .bin, .mtl 등 관련 파일을 함께 선택하거나 폴더 전체 선택을 이용하세요.</p><h3>UV / 텍스처 검사</h3><p>Checker/UV Grid/UV Stretch/Vertex RGB/Vertex Alpha를 전환하여 데이터를 검사하고, <b>UV & Flow</b>에서 X/Y 속도를 조절하세요. +X는 화면의 텍스처가 U+ 방향으로, +Y는 V+ 방향으로 이동하도록 보정합니다.</p><h3>Vertex Alpha 검증 / 3ds Max</h3><p><b>핑크 메시</b> = 실제로 로드된 Geometry에 Alpha가 없는 상태입니다. <b>흰색 메시</b> = RGBA A값이 1.0인 상태입니다. 3ds Max에서 Vertex Alpha(-2)에 페인트하고 Export FBX의 Vertex Colors 옵션을 켠 뒤 재수입하여 확인하세요. Exporter가 A를 전달하지 않은 경우 뷰어가 임의로 복원할 수는 없습니다.</p><h3>Blender / 3ds Max</h3><p><b>.blend</b>와 <b>.max</b>는 브라우저에서 직접 해석할 수 없습니다. Blender는 File → Export → glTF 2.0 (.glb), 3ds Max는 Export → FBX로 변환한 후 불러오세요. 동봉된 Blender 일괄 변환 스크립트도 사용할 수 있습니다.</p><h3>추가 머티리얼 옵션</h3><p>Packed ORM 이미지를 올리면 AO(R), Roughness(G), Metallic(B)에 자동 연결합니다. Normal Map Green 반전은 노멀 스케일 Y만 반전하며 원본 이미지를 수정하지 않습니다. 선택 메시의 Material ID별 편집을 지원합니다.</p><h3>단축 사용법</h3><p>좌클릭 회전 · 우클릭 패닝 · 휠 줌 · 메시 클릭하여 선택 · Fit으로 화면 맞춤. 원본 모델은 서버로 업로드되지 않습니다. 외부 라이브러리 로딩을 위해 인터넷 연결은 필요합니다.</p></div></dialog>
 <script>
 // No endless loading spinner when a CDN is blocked by the user's network.
 setTimeout(() => {

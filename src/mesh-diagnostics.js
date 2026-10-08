@@ -70,42 +70,71 @@ export function analyzeUVStretch(geometry, channel=0, matrixElements=null) {
   return {...common, validFaces:valid.length, medianScale:median, colors, reason:null};
 }
 
+/**
+ * Three.js BufferAttributes can be Float32, normalized Uint8/Uint16, or raw integer data.
+ * Never manufacture an opaque alpha from RGB-only colors; missing A is not the same as A=1.
+ */
+export function readColorComponent(attribute, i, component) {
+  if (!attribute || i < 0 || i >= attribute.count || component >= attribute.itemSize) return null;
+  const read = ['getX','getY','getZ','getW'][component];
+  if (typeof attribute[read] !== 'function') return null;
+  let v = attribute[read](i);
+  if (!Number.isFinite(v)) return null;
+  const data = attribute.array ?? attribute.data?.array;
+  if (!attribute.normalized && data instanceof Uint8Array) v /= 255;
+  else if (!attribute.normalized && data instanceof Uint16Array) v /= 65535;
+  return clamp(v,0,1);
+}
+
+/** Explicit standalone geometry alpha is supported, but RGB is NEVER silently read as alpha. */
+export function locateVertexAlpha(geometry) {
+  const color=geometry?.getAttribute('color');
+  const alpha=geometry?.getAttribute('alpha');
+  if (color?.itemSize>=4) return {attribute:color,component:3,source:'color.a'};
+  if (alpha?.itemSize>=1) return {attribute:alpha,component:0,source:'alpha'};
+  return {attribute:null,component:-1,source:null};
+}
+
 export function extractVertexColors(geometry, channel='rgb') {
   const position=geometry?.getAttribute('position');
   if(!position)return null;
   const color=geometry.getAttribute('color');
-  if(!color)return null;
-  const result=new Float32Array(position.count*3);
+  const alpha=locateVertexAlpha(geometry);
+  if(channel==='a' && !alpha.attribute) return null;
+  if(channel!=='a' && !color) return null;
+  const out=new Float32Array(position.count*3);
   for(let i=0;i<position.count;i++) {
-    const r=color&&i<color.count?color.getX(i):0.35;
-    const g=color&&i<color.count&&color.itemSize>1?color.getY(i):0.35;
-    const b=color&&i<color.count&&color.itemSize>2?color.getZ(i):0.35;
-    const a=color&&i<color.count&&color.itemSize>3?color.getW(i):1;
-    const selected=({r,g,b,a})[channel];
-    if(channel==='rgb'){result.set([clamp(r,0,1),clamp(g,0,1),clamp(b,0,1)],i*3);}
-    else {const v=clamp(selected??0.35,0,1);result.set([v,v,v],i*3);}
+    const v=channel==='a' ? readColorComponent(alpha.attribute,i,alpha.component) : null;
+    if(channel==='a') { const a=v??0.35; out.set([a,a,a],i*3);continue; }
+    const r=readColorComponent(color,i,0)??0.35;
+    const g=readColorComponent(color,i,1)??0.35;
+    const b=readColorComponent(color,i,2)??0.35;
+    if(channel==='rgb')out.set([r,g,b],i*3);
+    else {const c=({r,g,b})[channel]??0.35;out.set([c,c,c],i*3);}
   }
-  return result;
+  return out;
 }
 
-/** Vertex Alpha summary detects actual 4-component vertex colors (RGB alone is not RGBA). */
 export function analyzeVertexAlpha(geometry) {
   const position=geometry?.getAttribute('position');
   const color=geometry?.getAttribute('color');
   const vertices=position?.count||0;
-  const common={vertices, hasColors:!!color, hasAlpha:!!color&&color.itemSize>=4, sampled:0,
-    min:null,max:null,average:null,zero:0,partial:0,opaque:0,reason:null};
+  const {attribute,component,source}=locateVertexAlpha(geometry);
+  const common={vertices,hasColors:!!color,hasAlpha:!!attribute,source,sampled:0,
+    min:null,max:null,average:null,zero:0,partial:0,opaque:0,invalid:0,reason:null};
   if(!vertices)return {...common,reason:'no-vertices'};
-  if(!color)return {...common,reason:'missing-color'};
-  if(color.itemSize<4)return {...common,reason:'rgb-only'};
-  // All vertex alphas, deterministic with bounded iteration on extremely dense geometry.
-  const stride=Math.max(1,Math.ceil(Math.min(vertices,color.count)/250000));
-  let min=1,max=0,sum=0,zero=0,partial=0,opaque=0,sampled=0;
-  for(let i=0;i<Math.min(vertices,color.count);i+=stride){
-    const a=clamp(Number.isFinite(color.getW(i))?color.getW(i):1,0,1);
+  if(!attribute)return {...common,reason:color?'rgb-only':'missing-color'};
+  const count=Math.min(vertices,attribute.count);
+  if(count===0)return {...common,reason:'alpha-empty'};
+  const stride=Math.max(1,Math.ceil(count/250000));
+  let min=1,max=0,sum=0,zero=0,partial=0,opaque=0,invalid=0,sampled=0;
+  for(let i=0;i<count;i+=stride){
+    const a=readColorComponent(attribute,i,component);
+    if(a===null){invalid++;continue;}
     min=Math.min(min,a);max=Math.max(max,a);sum+=a;sampled++;
     if(a<=0.001)zero++;else if(a>=0.999)opaque++;else partial++;
   }
+  const reason=!sampled?'invalid-alpha':max<=.001?'all-black':min>=.999?'all-white':'varying-alpha';
   return {...common,sampled,min:sampled?min:null,max:sampled?max:null,
-    average:sampled?sum/sampled:null,zero,partial,opaque,reason:null};
+    average:sampled?sum/sampled:null,zero,partial,opaque,invalid,reason};
 }
