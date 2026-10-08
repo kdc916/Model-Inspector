@@ -151,7 +151,7 @@ MIT License.
 
 > GitHub Pages는 기존 설정 `main / (root)`를 유지하고, `src/mesh-diagnostics.js` 파일도 함께 업로드해야 합니다.
 
-## v0.4.0 (2026-10-08) · Wireframe / Vertex Alpha / Material Lab
+## v0.3.0 (2026-10-08) · Wireframe / Vertex Alpha / Material Lab
 
 **Online:** https://kdc916.github.io/Model-Inspector/ · **Repository:** https://github.com/kdc916/Model-Inspector
 
@@ -177,29 +177,17 @@ MIT License.
 | Bump | `bumpMap` | Linear · Bump Scale (Normal Map 사용 시 Normal 우선) |
 | Height / Displacement | `displacementMap` | Linear · 실제 정점을 이동. 메시 subdivision 없이 실루엣 세부 묘사 증가 불가 |
 
-**파일 호환성:** PNG/JPG/WebP/BMP/AVIF/GIF/TGA/DDS는 브라우저·Three.js 디코더 지원 범위 안에서 사용할 수 있습니다. PBR 텍스처 전용 HDR/EXR/KTX2 디코더 및 채널 분리 ORM 패킹은 v0.4.0에 포함되지 않습니다.
+**파일 호환성:** PNG/JPG/WebP/BMP/AVIF/GIF/TGA/DDS는 브라우저·Three.js 디코더 지원 범위 안에서 사용할 수 있습니다. PBR 텍스처 전용 HDR/EXR/KTX2 디코더 및 채널 분리 ORM 패킹은 v0.3.0에 포함되지 않습니다.
 
 **브라우저 미검증 범위:** 이 실행 환경에서는 라이브 Three.js CDN 접근/실제 WebGL 모델 렌더링 테스트를 완료하지 못했습니다. 테스트 `npm test`와 정적 JS 문법 검사는 통과했지만, 배포 브라우저에서 파일별 로딩·셰이더 동작을 추가 확인해야 합니다.
 
 
-## v0.4.0 — Vertex Alpha 검증 및 Packed ORM
+## v0.4.1 FBX Vertex Alpha import hotfix (2026-10-08)
 
-- **Vertex Alpha 누락 판정**: Geometry의 `color.itemSize`가 3(RGB)일 때 A=1.0을 가짜 생성하던 오류 수정. 알파 없는 메시를 **핑크색**으로 표시하고 경고합니다.
-- **검은 알파/흰 알파 구분**: RGBA 또는 독립 `alpha` 어트리뷰트가 로드된 경우에만 진단. 검정 0.0, 흰색 1.0, 중간값, min/max/avg 값을 개별 표시합니다.
-- **검증 JSON**: Inspector → `Vertex Alpha 진단 리포트` 버튼. 메시 이름, 로드된 색상 컴포넌트 수, 알파 min/max/avg, 버텍스 수를 저장합니다. 원본 파일의 실제 FBX 내부 구조를 파싱한 결과는 아닙니다.
-- **Packed ORM**: Material → `Packed ORM` 이미지 1장으로 **R→AO**, **G→Roughness**, **B→Metallic**을 연결합니다. PBR 데이터용 Linear 색 공간으로 처리합니다.
-- **Normal Map Green 반전**: OpenGL/DirectX 노멀 Y 방향을 비교합니다. 텍스처 픽셀을 수정하지 않고 `normalScale.y`를 반전합니다.
-- **Material ID 범위**: `Selected mesh only` 선택 후 Material ID를 지정하면 그 서브 머티리얼에만 텍스처 및 강도를 적용합니다. 기존 모델 원본 재질은 변경하지 않습니다.
-- 머티리얼 슬라이더 조절 시 **해당 속성만 수정**, 불필요한 기존 속성 초기화를 줄였습니다.
+`FBXLoader` (Three.js r186) parses FBX `LayerElementColor` as RGBA but writes only RGB into the mesh `color` BufferAttribute. That causes the inspector to report a missing alpha even when the FBX does contain vertex alpha. This is a **loader limitation**, not necessarily a 3ds Max export mistake.
 
-### 3ds Max Vertex Alpha가 핑크 또는 흰색일 때
+The inspector now reads the uploaded FBX's original `LayerElementColor.a` (ASCII or binary FBX v7, including compressed binary arrays) and recreates a standalone `alpha` BufferAttribute on the matching mesh. It uses polygon-corner index mapping and the same `ShapeUtils.triangulateShape()` path used by the bundled Three.js FBXLoader, so quads/ngons are handled as triangles correctly. It does **not** fabricate alpha from RGB and does **not** modify the original FBX on disk.
 
-3ds Max의 `Vertex Paint → Vertex Alpha`는 내부적으로 **Map Channel -2**입니다. 브라우저는 Export된 FBX/GLB에서 받은 버텍스 데이터를 검사할 수 있지만, Exporter가 버린 A 채널을 복구할 수는 없습니다.
+**Tested input:** `Fx_Mesh_Circle01_AlphaSide.FBX` (provided privately by the user, NOT stored in this repository) includes 756 RGBA corner records with alpha values 0 / 0.1509 / 0.882416 / 1. The recovery check reconstructs 1,092 triangle vertices and confirms values from black through white.
 
-1. 3ds Max에서 Vertex Paint의 표시 채널을 **Vertex Alpha**로 전환하고 실제 검정 값(0)이 존재하는지 확인합니다. Vertex Paint Layer의 **Opacity**와 Vertex Alpha 값은 별개입니다.
-2. FBX Exporter에서 **Vertex Colors** 내보내기를 활성화합니다.
-3. 기존 VertexPaint 스택에 문제가 의심되면 사본 모델에서 **Condense/Collapse** 후 FBX 재생성하고, 새 FBX를 3ds Max에 재임포트하여 Vertex Alpha 표시를 검사합니다. **원본 작업 파일에서 무조건 스택을 파괴하지 마세요.**
-4. 뷰어에서는 `Vertex Alpha` 모드에서 **핑크 = A 없음**, **검정 = A 0**, **흰색 = A 1**을 판별합니다. `Vertex Alpha 진단 리포트`를 내려받아 로드된 채널 구조를 비교합니다.
-5. FBX와 GLB 변환 결과가 다르면 내보내기 또는 변환 경로 차이를 의심합니다. 단, OBJ/STL은 채널 지원이 제한되므로 알파 검사 비교용으로 부적합합니다.
-
-> **제한:** FBX 내부에 독립 Map Channel -2 데이터가 남아 있더라도 표준 FBXLoader가 Geometry의 RGBA로 전달하지 못하면 뷰어에서 복원되지 않을 수 있습니다. 원본 FBX를 첨부해야 구체적인 원인을 검증할 수 있습니다.
+**Known limitation:** a multi-mesh FBX with several same-size unnamed geometries can be ambiguous; no uncertain alpha assignment is performed. Skinned/morph/complex FBX variants require browser-level model comparison. The source FBX is never uploaded to the app's server; all analysis runs locally.

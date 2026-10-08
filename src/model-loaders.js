@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { parseFbxColorLayers, restoreFBXAlpha } from './fbx-alpha-recovery.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
@@ -75,7 +76,7 @@ export class LocalModelLoader {
     const file = models[0];
     const manager = this.makeManager(selected);
     const type = ext(file.name);
-    let root, animations = [];
+    let root, animations = [], alphaRecovery=null;
     try {
       switch (type) {
         case 'glb': case 'gltf': {
@@ -95,8 +96,17 @@ export class LocalModelLoader {
         }
         case 'fbx': {
           const loader = new FBXLoader(manager);
-          root = loader.parse(await file.arrayBuffer(), '');
+          const source = await file.arrayBuffer();
+          root = loader.parse(source, '');
           animations = root.animations || [];
+          try {
+            const layers=await parseFbxColorLayers(source);
+            alphaRecovery=restoreFBXAlpha(root,layers,THREE);
+            if(alphaRecovery.unmatched) console.warn('[maxVFX] FBX Alpha recovery incomplete',alphaRecovery);
+          } catch (err) {
+            alphaRecovery={sourceLayers:0,restored:0,error:String(err)};
+            console.warn('[maxVFX] FBX Alpha recovery unavailable:',err);
+          }
           break;
         }
         case 'obj': {
@@ -137,6 +147,6 @@ export class LocalModelLoader {
     }
     if (!root) throw new Error('로드한 데이터에서 3D 모델을 찾지 못했습니다.');
     root.name = file.name;
-    return { root, animations, name: file.name, format:type.toUpperCase(), files:selected.length };
+    return { root, animations, name: file.name, format:type.toUpperCase(), files:selected.length, alphaRecovery };
   }
 }

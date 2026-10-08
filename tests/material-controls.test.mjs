@@ -63,7 +63,7 @@ test('ORM packed channel mapping and normal green inversion use stable PBR conve
   assert.deepEqual(scopedMaterialIndices(3,99),[]);
   assert.deepEqual(scopedMaterialIndices(3,NaN),[0,1,2]);
 });
-test('v0.4.0 controls referenced in HTML and app code',()=>{
+test('v0.4.1 controls referenced in HTML and app code',()=>{
   const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../src/app.js',import.meta.url),'utf8');
   for(const id of ['alphaViewportAlert','btnAlphaReport','ormInput','ormFileName','matNormalFlipGreen','matSlotIndex']){

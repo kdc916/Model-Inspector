@@ -215,11 +215,16 @@ function installModel(root,meta={},clips=[]){
   state.selected=null;state.uvPlaying=false;state.flowPhaseX=state.flowPhaseY=0;state.offsetsDirty=true;
   $('#btnUVPlay').textContent='▶ UV Flow Play';$('#flowOverlay').hidden=true;
   $('#assetTitle').textContent=(meta.name||root.name||'MODEL').slice(0,42).toUpperCase();
-  $('#assetMeta').textContent=`${meta.format||'DEMO'} · ${state.meshes.length} meshes`;
+  $('#assetMeta').textContent=`${meta.format||'DEMO'} · ${state.meshes.length} meshes`+
+    (meta.alphaRecovery?.restored?` · Alpha restored ${meta.alphaRecovery.restored}/${meta.alphaRecovery.sourceLayers}`:'');
   state.mode='material';updateDisplayMaterial();
   updateVertexAlphaHealth();
   updateStats();updateHierarchy();updateInspector();updateMaterialSlotSelect();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);
-  status(`${meta.name||'데모 모델'} 준비 완료 · ${fmt(modelStats(state.meshes).triangles)} triangles`);
+  const alphaInfo=meta.alphaRecovery;
+  status(`${meta.name||'데모 모델'} 준비 완료 · ${fmt(modelStats(state.meshes).triangles)} triangles`+
+    (alphaInfo?.restored?` · FBX Vertex Alpha ${alphaInfo.restored} mesh 복구됨`:
+     alphaInfo?.unmatched?` · ⚠ FBX Alpha ${alphaInfo.unmatched} mesh 대응 실패`:''),
+    !!alphaInfo?.unmatched||!!alphaInfo?.error);
 }
 function fitCamera(target){
   if(!target)return;
@@ -353,7 +358,9 @@ function refreshAlphaViewportWarning(){
 function updateVertexAlphaHealth(){
   const meshes=inspected();
   const reports=meshes.map(m=>analyzeVertexAlpha(state.originalGeos.get(m)||m.geometry));
-  $('#vertexAlphaHealth').textContent=formatAlphaReport(reports,meshes);
+  const recovered=meshes.filter(m=>(state.originalGeos.get(m)||m.geometry)?.userData?.fbxAlphaRecovered).length;
+  $('#vertexAlphaHealth').textContent=formatAlphaReport(reports,meshes)+
+    (recovered?` · FBX RGBA Alpha 복구: ${recovered} mesh`: '');
   refreshAlphaViewportWarning();
 }
 
@@ -682,7 +689,7 @@ function bindUI(){
         return {name:mesh.name,vertices:geo.getAttribute('position')?.count||0,
           colorItemSize:c?.itemSize||0,colorArrayType:c?.array?.constructor?.name||null,
           colorNormalized:c?.normalized||false,standaloneAlphaItemSize:a?.itemSize||0,
-          alpha:analyzeVertexAlpha(geo)};
+          alpha:analyzeVertexAlpha(geo),fbxAlphaRecovered:!!geo.userData?.fbxAlphaRecovered,fbxAlphaSource:geo.userData?.fbxAlphaSource||null};
       })};
     const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
     const link=document.createElement('a');link.href=url;link.download='maxVFX-vertex-alpha-report.json';link.click();
