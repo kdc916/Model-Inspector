@@ -22,6 +22,8 @@ import { diagnoseMeshes } from './uv-diagnostics.js';
 import { inspectAsset,buildComparison } from './asset-report.js';
 import { SceneGuides, formatPivotReadout } from './scene-guides.js';
 import { resolvePreviewBlend, applyPreviewBlend } from './render-state.js';
+import { SHADER_FIELD_DEFAULTS, normalizeShaderStudio, installShaderStudio, updateShaderStudio } from './shader-studio.js';
+import { DepthPreview } from './depth-preview.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -40,7 +42,7 @@ const state = {
   spin:false, fps:60, lastFpsUpdate:0, frameCount:0,
   pointerDown:null, dragCount:0, loadGeneration:0, slotFiles:new Map(),
   slotFlows:new Map(), textureTransforms:new Map(), flowSeconds:0, flipbookSeconds:0, textureKTX2:null,
-  compareLoader:null, compareRoot:null, compareMeta:null
+  compareLoader:null, compareRoot:null, compareMeta:null, shaderMaps:{noise:null,mask:null},shaderSeconds:0,shaderUploadSerial:{noise:0,mask:0}
 };
 const slotNames=TEXTURE_SLOTS;
 const textureMapSlots=TEXTURE_SLOTS;
@@ -76,8 +78,35 @@ const bloomComposer=new EffectComposer(renderer);
 bloomComposer.addPass(new RenderPass(scene,camera));
 const bloomPass=new UnrealBloomPass(new THREE.Vector2(512,512),.8,.2,1);
 bloomPass.enabled=false;bloomComposer.addPass(bloomPass);bloomComposer.addPass(new OutputPass());
+const depthPreview=new DepthPreview(THREE,renderer,scene,camera);
+const shaderControls=Object.keys(SHADER_FIELD_DEFAULTS);
+function shaderUI(){return Object.fromEntries(shaderControls.map(id=>[id,$('#'+id)?.type==='checkbox'?$('#'+id).checked:$('#'+id)?.value]));}
+function shaderSettings(){return normalizeShaderStudio(shaderUI());}
+function updateShaderForMaterial(mat){
+  if(!$('#fxEnabled').checked)return;
+  installShaderStudio(mat,THREE);
+  updateShaderStudio(mat,THREE,shaderSettings(),{time:state.shaderSeconds,noiseTexture:state.shaderMaps.noise,maskTexture:state.shaderMaps.mask,...depthPreview.uniforms});
+}
+function updateShaderStudioUI({rebuild=true}={}){
+  const settings=shaderSettings();depthPreview.configure(settings.fxEnabled&&settings.fxDepthFade,settings.fxPlaneVisible);
+  if(rebuild)updateDisplayMaterial();
+  for(const mesh of state.meshes){const cache=state.debugMats.get(mesh)||{};for(const key of ['working','checker','uvgrid'])for(const mat of (cache[key]?(Array.isArray(cache[key])?cache[key]:[cache[key]]):[])){
+    if(settings.fxEnabled)updateShaderForMaterial(mat);
+    else if(mat.userData.vfxStudio){mat.userData.vfxStudio.vfxFxEnabled.value=0;mat.userData.vfxStudio.vfxFxDepthEnabled.value=0;}
+  }}
+}
+async function loadShaderTexture(slot,file){
+  if(!file)return;
+  if(!/\.(png|jpe?g|webp|bmp)$/i.test(file.name)||file.size>32*1024*1024){status('Shader Studio: PNG/JPG/WebP/BMP · 최대 32MB 이미지가 필요합니다.',true);return;}
+  const serial=++state.shaderUploadSerial[slot];
+  const uri=URL.createObjectURL(file);
+  try{const tex=await new THREE.TextureLoader().loadAsync(uri);
+    if(serial!==state.shaderUploadSerial[slot]){tex.dispose();return;}tex.wrapS=tex.wrapT=THREE.RepeatWrapping;tex.colorSpace=THREE.NoColorSpace;tex.flipY=$('#flipTextureY').checked;tex.needsUpdate=true;
+    state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=tex;$('#fxLayerStatus').textContent=`${slot}: ${file.name} · 브라우저에서만 사용`;updateShaderStudioUI();
+  }catch(e){status(`Shader Texture 실패: ${e.message}`,true);}finally{URL.revokeObjectURL(uri);}
+}
 const flowFields={uv:'slotFlowUV',speedX:'slotFlowX',speedY:'slotFlowY',offsetX:'slotOffsetX',offsetY:'slotOffsetY',repeatX:'slotRepeatX',repeatY:'slotRepeatY'};
-const presetFields=['matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','toggleAxes','togglePivot','axisSize','pivotSize','pivotScope','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
+const presetFields=[...shaderControls,'matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','toggleAxes','togglePivot','axisSize','pivotSize','pivotScope','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
 function getField(id){return $('#'+id);}
 function downloadJSON(name,data){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}
 function saveSlotFlow(){const values={};for(const [k,id] of Object.entries(flowFields))values[k]=$('#'+id).value;state.slotFlows.set($('#slotFlowSlot').value,createSlotFlow(values));state.offsetsDirty=true;}
@@ -216,7 +245,7 @@ function updateDisplayMaterial(){
     const cache=state.debugMats.get(mesh)||{};
     if(state.mode==='material'){
       // Never mutate an imported material to attach preview shaders.
-      if($('#toggleAlphaOverlay').checked && !cache.working){
+      if(($('#toggleAlphaOverlay').checked || $('#fxEnabled').checked) && !cache.working){
         makeWorkingMaterials(mesh);
         cache.working=state.debugMats.get(mesh).working;
       }
@@ -249,6 +278,15 @@ function updateDisplayMaterial(){
       for(const mat of (Array.isArray(mesh.material)?mesh.material:[mesh.material])){
         // Only patch cloned/owned materials; original materials are never modified.
         if(cache.working || state.mode!=='material')configureAlphaForMaterial(mesh,mat);
+        updateShaderForMaterial(mat);
+        if($('#fxEnabled').checked && ($('#fxDepthFade').checked || (state.shaderMaps.mask && Number($('#fxMaskStrength').value)>0))){
+          if(!mat.transparent||mat.depthWrite){mat.transparent=true;mat.depthWrite=false;mat.needsUpdate=true;}
+          mat.userData.vfxDepthFadeBlend=true;
+        }else if(mat.userData.vfxDepthFadeBlend){
+          mat.userData.vfxDepthFadeBlend=false;
+          if(mat.userData.vfxAlphaMode!==undefined)applyBlendToMaterial(mat,mat.userData.vfxAlphaMode,$('#matOpacity').value,$('#matAlphaCutoff').value);
+          else {mat.depthWrite=true;mat.transparent=false;mat.needsUpdate=true;}
+        }
       }
     }
     state.debugMats.set(mesh,cache);
@@ -325,6 +363,7 @@ function installModel(root,meta={},clips=[]){
     if(mesh.geometry && !mesh.geometry.hasAttribute('normal'))mesh.geometry.computeVertexNormals();
   }
   scene.add(root);
+  depthPreview.fit(root);
   updateSceneGuides();
   if(clips.length){state.sceneMixer=new THREE.AnimationMixer(root);}
   state.selected=null;state.uvPlaying=false;state.flowPhaseX=state.flowPhaseY=0;state.offsetsDirty=true;
@@ -874,7 +913,7 @@ function bindUI(){
   $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
   $('#btnAlphaReport').onclick=()=>{
     const inspectedMeshes=inspected();
-    const report={tool:'maxVFX Model Inspector',version:'0.8.2',asset:$('#assetTitle').textContent,
+    const report={tool:'maxVFX Model Inspector',version:'0.9.0',asset:$('#assetTitle').textContent,
       warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
       meshes:inspectedMeshes.map(mesh=>{
         const geo=state.originalGeos.get(mesh)||mesh.geometry;
@@ -999,7 +1038,7 @@ function bindUI(){
   $('#btnPresetExport').onclick=()=>{
     const ui=readControls(presetFields,getField);
     const slotFlows=Object.fromEntries(state.slotFlows);
-    downloadJSON('maxVFX-material-preset-v0.8.json',exportPreset(ui,slotFlows,Object.fromEntries(state.textureTransforms)));status('프리셋 JSON 저장 완료');
+    downloadJSON('maxVFX-material-preset-v0.9.json',exportPreset(ui,slotFlows,Object.fromEntries(state.textureTransforms)));status('프리셋 JSON 저장 완료');
   };
   $('#btnPresetImport').onclick=()=>$('#presetFileInput').click();
   $('#presetFileInput').onchange=async e=>{
@@ -1013,7 +1052,7 @@ function bindUI(){
       state.flowPhaseX=state.flowPhaseY=state.flowSeconds=state.flipbookSeconds=0;
       $('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';
       const targets=scopeMeshes();applyMaterialInputs(targets);updateBloom();setAlphaOverlay($('#toggleAlphaOverlay').checked);state.offsetsDirty=true;
-      applyTextureParameters();status('프리셋 적용 완료. 텍스처 파일은 별도로 올려야 합니다.');
+      applyTextureParameters();updateShaderStudioUI();status('프리셋 적용 완료. Shader Studio 텍스처 파일은 별도로 올려야 합니다.');
     }catch(err){status('프리셋 오류: '+err.message,true);}
   };
   $('#btnCompareOpen').onclick=()=>$('#compareFileInput').click();
@@ -1026,7 +1065,7 @@ function bindUI(){
     controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(1,.65,1).normalize().multiplyScalar(radius*4));controls.update();
   };
   $('#btnQAReport').onclick=()=>{
-    const report={tool:'maxVFX Model Inspector',version:'0.8.2',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
+    const report={tool:'maxVFX Model Inspector',version:'0.9.0',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
       primary:inspectAsset(state.model,state.uvChannel),secondary:state.compareRoot?inspectAsset(state.compareRoot,state.uvChannel):null,
       notes:['Overlapping UVs can be intentional for VFX.','Large meshes are sampled for diagnostics.','Draw calls and FPS depend on device and view state.']};
     downloadJSON('maxVFX-production-report.json',report);status('검수 리포트 저장 완료');
@@ -1038,6 +1077,27 @@ function bindUI(){
     close.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();clearTextureSlot(label.dataset.slot);});
     label.appendChild(close);
   });
+  // Shader Studio: controls use uniform updates; no per-frame shader recompilation.
+  for(const id of shaderControls){
+    const el=$('#'+id);if(!el)throw Error('Shader Studio UI missing '+id);
+    el.addEventListener(el.type==='checkbox'||el.tagName==='SELECT'?'change':'input',()=>{
+      const output=$('#out'+id[0].toUpperCase()+id.slice(1));
+      if(output)output.textContent=Number(el.value).toFixed(2);
+      updateShaderStudioUI();
+    });
+  }
+  $('#fxNoiseFile').onchange=e=>{loadShaderTexture('noise',e.target.files?.[0]);e.target.value='';};
+  $('#fxMaskFile').onchange=e=>{loadShaderTexture('mask',e.target.files?.[0]);e.target.value='';};
+  for(const slot of ['noise','mask'])$(slot==='noise'?'#fxClearNoise':'#fxClearMask').onclick=()=>{
+    ++state.shaderUploadSerial[slot];state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=null;
+    $('#fxLayerStatus').textContent=`${slot} 텍스처 제거됨`;updateShaderStudioUI();
+  };
+  $('#fxReset').onclick=()=>{
+    for(const [id,value] of Object.entries(SHADER_FIELD_DEFAULTS)){const el=$('#'+id);if(el.type==='checkbox')el.checked=Boolean(value);else el.value=value;}
+    for(const slot of ['noise','mask']){++state.shaderUploadSerial[slot];state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=null;}
+    for(const id of shaderControls){const out=$('#out'+id[0].toUpperCase()+id.slice(1));if(out)out.textContent=Number($('#'+id).value).toFixed(2);}
+    $('#fxLayerStatus').textContent='Shader Studio 초기화 완료';updateShaderStudioUI();
+  };
   $('#btnMaterialReset').onclick=resetMaterials;
   $('#animationSelect').onchange=()=>switchClip(true);
   $('#btnAnimToggle').onclick=()=>{
@@ -1064,6 +1124,7 @@ function sizeRenderer(){
   const w=viewport.clientWidth,h=viewport.clientHeight;
   if(w<1||h<1)return;
   renderer.setSize(w,h,false);bloomComposer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();
+  depthPreview.resize(Math.floor(w*renderer.getPixelRatio()),Math.floor(h*renderer.getPixelRatio()));
 }
 const resizeObserver=new ResizeObserver(sizeRenderer);resizeObserver.observe(viewport);
 function animate(){
@@ -1081,10 +1142,14 @@ function animate(){
   }
   if($('#flipbookEnabled').checked){state.flipbookSeconds+=dt;state.offsetsDirty=true;}
   if(state.offsetsDirty)applyTextureParameters();
+  if($('#fxEnabled').checked){
+    const s=shaderSettings();if(s.fxNoiseSpeedU||s.fxNoiseSpeedV) {state.shaderSeconds=(state.shaderSeconds+dt)%1024;updateShaderStudioUI({rebuild:false});}
+  }
   controls.update();
   state.normalHelper?.update();
   state.tangentHelper?.update();
   guides.followPivots();
+  depthPreview.render();
   if(bloomPass.enabled)bloomComposer.render();else renderer.render(scene,camera);
   state.frameCount++;
   const t=performance.now();

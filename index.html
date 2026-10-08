@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.8.2</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.9.0</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -60,7 +60,7 @@
   </main>
 
   <aside class="right-panel panel">
-    <div class="right-tabs"><button class="right-tab active" data-tab="inspect">Inspector</button><button class="right-tab" data-tab="uv">UV & Flow</button><button class="right-tab" data-tab="material">Material</button><button class="right-tab" data-tab="workflow">Workflow</button></div>
+    <div class="right-tabs"><button class="right-tab active" data-tab="inspect">Inspector</button><button class="right-tab" data-tab="uv">UV & Flow</button><button class="right-tab" data-tab="material">Material</button><button class="right-tab" data-tab="shader">VFX Shader</button><button class="right-tab" data-tab="workflow">Workflow</button></div>
     <div class="right-content">
       <section class="tabpage active" id="page-inspect">
         <div class="section-title"><span>GEOMETRY INFO</span><span class="chip">MESH</span></div>
@@ -188,6 +188,43 @@
         <label class="check material-check"><input type="checkbox" id="flipTextureY"> Flip uploaded texture Y</label>
         <button class="subtle full" id="btnMaterialReset">↺ 원본 재질 복원</button>
       </section>
+      <section class="tabpage" id="page-shader">
+        <div class="section-title"><span>VFX SHADER STUDIO</span><span class="chip accent-chip">0.9</span></div>
+        <label class="check material-check"><input id="fxEnabled" type="checkbox"> Enable Shader Studio (Material / Checker / UV Grid)</label>
+        <div class="note small-note">기존 FBX 및 텍스처는 수정하지 않습니다. Vertex Alpha, UV Flow와 합성됩니다. 이 기능은 Three.js WebGL 기반 미리보기이며 엔진 셰이더의 완전한 재현은 아닙니다.</div>
+        <div class="section-title separated"><span>FRESNEL RIM</span></div>
+        <label class="check material-check"><input id="fxFresnel" type="checkbox"> Fresnel edge</label>
+        <div class="field"><label>Edge color</label><input id="fxFresnelColor" type="color" value="#58cfff"></div>
+        <div class="field"><label>Power <output id="outFxFresnelPower">3.00</output></label><input id="fxFresnelPower" type="range" min="0.2" max="12" step="0.1" value="3"></div>
+        <div class="field"><label>Strength <output id="outFxFresnelStrength">1.00</output></label><input id="fxFresnelStrength" type="range" min="0" max="12" step="0.1" value="1"></div>
+        <div class="section-title separated"><span>DISSOLVE + EDGE GLOW</span></div>
+        <label class="check material-check"><input id="fxDissolve" type="checkbox"> Enable dissolve</label>
+        <div class="field"><label>Amount <output id="outFxDissolveAmount">0.30</output></label><input id="fxDissolveAmount" type="range" min="0" max="1" step="0.01" value="0.3"></div>
+        <div class="field"><label>Edge width <output id="outFxDissolveWidth">0.08</output></label><input id="fxDissolveWidth" type="range" min="0.001" max="0.5" step="0.005" value="0.08"></div>
+        <div class="field"><label>Glow color</label><input id="fxDissolveColor" type="color" value="#ff873a"></div>
+        <div class="field"><label>Glow strength <output id="outFxDissolveGlow">1.00</output></label><input id="fxDissolveGlow" type="range" min="0" max="15" step="0.1" value="1"></div>
+        <div class="section-title separated"><span>MULTI-LAYER NOISE / MASK</span></div>
+        <div class="speed-grid"><div class="field"><label>Noise texture</label><input id="fxNoiseFile" type="file" accept="image/png,image/jpeg,image/webp,image/bmp"></div><div class="field"><label>Mask texture</label><input id="fxMaskFile" type="file" accept="image/png,image/jpeg,image/webp,image/bmp"></div></div>
+        <div class="inline-actions"><button class="subtle" id="fxClearNoise">× Noise 제거</button><button class="subtle" id="fxClearMask">× Mask 제거</button></div>
+        <div class="diagnostic-result" id="fxLayerStatus">기본 노이즈는 절차적 패턴을 사용합니다. Noise 텍스처를 추가하면 합성에 이용합니다.</div>
+        <div class="field"><label>Layer blend</label><select id="fxNoiseMode"><option value="multiply">Multiply</option><option value="add">Add</option><option value="lerp">Mix</option></select></div>
+        <div class="field"><label>Noise layer intensity <output id="outFxNoiseStrength">0.00</output></label><input id="fxNoiseStrength" type="range" min="0" max="1" step="0.01" value="0"></div>
+        <div class="speed-grid"><div class="field"><label>Tiling U</label><input id="fxNoiseScaleU" type="number" min="0.01" max="64" step="0.1" value="1"></div><div class="field"><label>Tiling V</label><input id="fxNoiseScaleV" type="number" min="0.01" max="64" step="0.1" value="1"></div></div>
+        <div class="speed-grid"><div class="field"><label>Speed U</label><input id="fxNoiseSpeedU" type="number" min="-16" max="16" step="0.05" value="0"></div><div class="field"><label>Speed V</label><input id="fxNoiseSpeedV" type="number" min="-16" max="16" step="0.05" value="0"></div></div>
+        <div class="field"><label>Mask channel</label><select id="fxMaskChannel"><option value="r">Red</option><option value="g">Green</option><option value="b">Blue</option><option value="a">Alpha</option></select></div>
+        <label class="check material-check"><input id="fxMaskInvert" type="checkbox"> Invert mask</label>
+        <div class="field"><label>Mask influence <output id="outFxMaskStrength">1.00</output></label><input id="fxMaskStrength" type="range" min="0" max="1" step="0.05" value="1"></div>
+        <div class="section-title separated"><span>UV DISTORTION</span></div>
+        <div class="field"><label>Distortion <output id="outFxDistort">0.00</output></label><input id="fxDistort" type="range" min="0" max="0.3" step="0.005" value="0"></div>
+        <div class="note small-note">Main Color UV만 왜곡합니다. Normal/AlphaMap의 UV는 보존됩니다. 절차적 노이즈 또는 업로드한 Noise를 이용합니다.</div>
+        <div class="section-title separated"><span>SOFT PARTICLE / DEPTH FADE</span></div>
+        <label class="check material-check"><input id="fxDepthFade" type="checkbox"> Enable depth fade (test plane)</label>
+        <label class="check material-check"><input id="fxPlaneVisible" type="checkbox" checked> Show test plane</label>
+        <div class="field"><label>Fade distance <output id="outFxFadeDistance">0.50</output></label><input id="fxFadeDistance" type="range" min="0.001" max="25" step="0.05" value="0.5"></div>
+        <div class="note small-note">테스트 평면과 VFX 메시의 실제 깊이 차이를 사용합니다. 테스트 평면만 Depth Prepass에 포함되며 복잡한 씬 전체 충돌은 아직 지원하지 않습니다. Bloom 및 Additive 합성과 함께 테스트할 수 있습니다.</div>
+        <button class="subtle full" id="fxReset">↺ Shader Studio 초기화</button>
+      </section>
+
       <section class="tabpage" id="page-workflow">
         <div class="section-title"><span>PRODUCTION WORKFLOW</span><span class="chip">0.8</span></div>
         <div class="section-title separated"><span>PRESET</span></div>

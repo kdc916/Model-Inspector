@@ -48,7 +48,9 @@ export function materialSnapshot(form={}) {
     'matBloom','matBloomStrength','matBloomRadius','matBloomThreshold',
     'toggleAxes','togglePivot','axisSize','pivotSize','pivotScope',
     'flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures',
-    'slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
+    'slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop',
+    'fxEnabled','fxFresnel','fxFresnelPower','fxFresnelStrength','fxFresnelColor','fxDissolve','fxDissolveAmount','fxDissolveWidth','fxDissolveColor','fxDissolveGlow',
+    'fxNoiseStrength','fxNoiseMode','fxNoiseScaleU','fxNoiseScaleV','fxNoiseSpeedU','fxNoiseSpeedV','fxMaskStrength','fxMaskChannel','fxMaskInvert','fxDistort','fxDepthFade','fxFadeDistance','fxPlaneVisible'];
   return Object.fromEntries(keys.filter(k=>Object.hasOwn(form,k)).map(k=>[k,form[k]]));
 }
 export function normalizePreset(raw) {

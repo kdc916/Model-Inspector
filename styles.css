@@ -46,3 +46,11 @@
 #comparisonResults{white-space:pre-line;word-break:break-word}
 #slotFlowEnabled,#flipbookEnabled,#matBloom{accent-color:var(--cyan)}
 @media(max-width:900px){#page-workflow .inline-actions button{font-size:12px}}
+
+/* v0.9.0 Shader Studio panel */
+.right-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}
+.right-tab{font-size:9.5px;padding:14px 1px;white-space:nowrap}
+#page-shader .field input[type=file]{font-size:10px;max-width:100%;color:#97acbb}
+#page-shader .inline-actions button{font-size:10px}
+#page-shader .section-title.separated{margin-top:22px}
+@media(max-width:520px){.right-tab{font-size:9px}}

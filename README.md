@@ -1,16 +1,34 @@
-## v0.8.2 (2026-10-08) — Pivot Size / Material UV Transform
-
 - Inspector: **World Axis** 크기와 **Mesh Pivot** 크기 슬라이더 독립 적용. 기존 `axisSize` 프리셋 호환, 신규 `pivotSize` 프리셋 저장.
 - 가이드 크기 드래그 시 지오메트리를 매번 다시 생성하지 않고 `SceneGuides.resize()`로 스케일만 조절.
 - Material 탭: 9개 텍스처 슬롯마다 Tiling U/V 및 수동 Offset U/V. 값은 기존 글로벌/개별 UV Flow에 곱셈/덧셈으로 결합되며 애니메이션을 멈추지 않음.
 - Preset JSON: `textureTransforms` 맵을 검증/저장/복원. 이전 프리셋에서도 기본값 적용.
 - FBX Vertex Alpha import와 Apply Alpha 프리뷰는 변경하지 않음.
 
-# maxVFX Model Inspector
+# maxVFX Model Inspector v0.9.0
 
 > 3D Asset Workbench — 브라우저에서 모델 구조, UV, 노멀, PBR 텍스처, UV Flow를 검수하는 도구.
 >
 > **Version:** 0.3.0 (2026-10-08) · Three.js `0.186.0` 고정 · 별도 백엔드 불필요
+
+
+## v0.9.0 · VFX Shader Studio (2026-10-08)
+
+### New VFX Shader tab
+- **Fresnel Rim**: adjustable edge tint, power and intensity (preview-space diffuse rim).
+- **Dissolve**: procedural/noise-texture threshold, customizable edge width, color, glow. A clipped fragment is discarded; alpha opacity on remaining pixels continues to obey the existing FBX Vertex Alpha/Blend pipeline.
+- **Multi-Layer**: optional Noise color texture with Multiply / Add / Mix, independent U/V tiling and time-based offset. Additional Mask image uses selectable R/G/B/A channel, invert and strength; affects fragment alpha.
+- **UV Distortion**: optional noise-driven *Base Color map* UV displacement. PBR Normal / Opacity maps are not warped by this effect.
+- **Soft Particle test**: an isolated, optionally visible horizontal test plane is rendered to its own depth buffer. Depth Fade adjusts alpha at the intersection with **that test plane**. It is not scene-wide collision depth; other model geometry does not occlude the effect in this prepass.
+- **State / preset**: Shader Studio toggles and values are included in v1 JSON preset schema (old v0.8 preset files remain importable). Uploaded Noise/Mask image bytes are **not** embedded.
+- **Safety**: Model, UVs, textures and FBX Vertex Alpha are not edited in place. Shader extensions patch cloned working materials and update uniforms without recompiling every animation frame. Uploads remain in-browser; accepts PNG/JPEG/WebP/BMP <=32MB per Shader Studio image.
+
+### Limitations and quality status
+- The WebGL shader preview is not an identical implementation of Unreal Material or Unity URP shader graphs. Fresnel depends on mesh normals and may not match skin-deformed normals; test on static VFX meshes first.
+- Depth Fade is against the *test plane only*, not arbitrary scene geometry, and requires WebGL depth-texture support. Set a transparent preview blend mode (automatic for Depth Fade/Mask). Transparent sorting may differ from in-engine materials.
+- VFX noise UVs use the primary mesh UV attribute; secondary UV channels/animated distortion of every PBR map are beyond this version.
+- Standalone Noise and Mask uploads currently accept standard browser image formats, not standalone KTX2/TGA/DDS; existing PBR slots retain their original format support.
+- Source and static tests run without external CDN access. Full shader compilation and pixel-level browser screenshots still require an environment where Three.js r186 CDN dependencies can load.
+
 
 ## 주요 기능
 
