@@ -2,16 +2,16 @@
 
 > 3D Asset Workbench — 브라우저에서 모델 구조, UV, 노멀, PBR 텍스처, UV Flow를 검수하는 도구.
 >
-> **Version:** 0.1.0 (2026-10-08) · Three.js `0.186.0` 고정 · 별도 백엔드 불필요
+> **Version:** 0.2.0 (2026-10-08) · Three.js `0.186.0` 고정 · 별도 백엔드 불필요
 
 ## 주요 기능
 
 - **파일 로딩:** GLB, glTF(+ BIN/텍스처), FBX, OBJ(+ MTL/텍스처), STL, PLY, 3DS, DAE, 3MF
 - **모델 탐색:** 마우스 회전/패닝/줌, 모델 맞춤, 메시 클릭 선택, Scene Hierarchy, 배경·노출 조절, PNG 캡처
 - **메시 분석:** 총 삼각형 수, position 정점 수, 메시 수, Draw Calls, FPS, AABB 크기, UV/노멀 유무
-- **디버그 뷰:** Material, UV Checker, UV Grid, Normal Color, Wireframe, Vertex Normal Vector, Double-sided
+- **디버그 뷰:** Material, UV Checker, UV Grid, Normal Color, **UV Stretch Heatmap**, **Vertex RGBA (RGB/R/G/B/A)**, Wireframe, Vertex Normal/Tangent Vector, Double-sided
 - **2D UV:** UV 채널 UV0~UV3 선택, 선택 메시/전체 메시 UV 와이어 레이아웃, PNG 내보내기, UV 범위/타일링 확인
-- **UV Flow:** X/Y 시각적 이동 속도, 수동 이동, U/V 반복, 재생/일시정지/초기화. +값은 **보이는 텍스처가 해당 방향으로 이동**하도록 오프셋 부호 처리
+- **UV Flow:** 방향/오라/폭포/열기 프리셋, X/Y 시각적 이동 속도, 수동 이동, U/V 반복, 재생/일시정지/초기화. +값은 **보이는 텍스처가 해당 방향으로 이동**하도록 오프셋 부호 처리
 - **PBR 업로드:** Base Color, Normal, Roughness, Metallic, Emissive, Opacity. PNG/JPG/WebP/TGA/DDS 등. 전체 또는 선택 메시 적용
 - **애니메이션:** GLB/glTF/FBX 등에 들어 있는 지원 AnimationClip 선택 및 Play/Pause
 - **반응형:** 데스크톱 3패널 작업 UI, 모바일 스택 레이아웃
@@ -97,7 +97,11 @@ blender -b --python tools/blender_to_glb.py -- --input my_model.fbx --output my_
 - 3D 자산 내 **Draco/Meshopt GLB** 해제 지원을 연결했지만, **KTX2/BasisU 압축 텍스처**는 별도 트랜스코더 연결 전까지 지원되지 않습니다.
 - 디버그 Normal Vector는 **선택/첫 메시 15,000 position vertices 이하**에서만 표시합니다. 성능 보호를 위한 제한입니다.
 - Wireframe은 메시마다 약 **18만 트라이앵글** 이하에서만 오버레이합니다. 높은 밀도의 모델은 Material/Normal/통계로 검사하세요.
-- `Normal Color`는 표면 노멀 색상 시각화이며, Vertex Normal Vector는 벡터 선을 그립니다. UV Stretch Heatmap, 탄젠트 시각화, 이중 UV Diff 뷰는 추후 개발 항목입니다.
+- `Normal Color`는 표면 노멀 색상, `Normal/Tangent vectors`는 벡터 선입니다. Tangent 표시에는 모델에 tangent attribute가 있어야 합니다. 누락된 tangent를 임의 재생성하지 않습니다.
+- `UV Stretch`는 각 메시의 world area / UV area의 **선형값**을 계산하고 메시별 **중앙값(median)**에 대한 로그 편차를 색상으로 표시합니다. 파랑=UV가 상대적으로 촘촘, 초록=중앙값, 빨강=UV가 상대적으로 부족(늘어짐). 0 UV area/정상 데이터 없는 면은 회색입니다. **절대 texel density나 UV Overlap 검사와 다릅니다.**
+- Heatmap은 18만 triangles/mesh를 초과하면 성능 보호를 위해 회색으로 표시됩니다. 전체 요약도 최초 최대 18만 triangles 범위 내 메시를 대상으로 계산하며 생략한 메시 개수를 알립니다.
+- `Vertex RGBA`는 원본 color attribute의 RGB 및 R/G/B/A 채널을 회색조로 확인합니다. RGB 타입(알파 미포함)의 A 채널은 불투명(1)으로 간주합니다. Vertex Color 부재는 중립 회색으로 보입니다.
+- 다중 재질 메시의 UV Grid/Checker/Normal 디버그 표시에서 geometry.groups의 materialIndex를 보존하도록 디버그 재질을 복제 매핑합니다.
 - `Draw Calls`는 모델 단독 측정이 아니라 **뷰포트 장면의 렌더 호출 수**입니다. `Vertices`는 geometry의 Position attribute 카운트이므로 DCC에서 말하는 유니크 토폴로지 정점 수와 다를 수 있습니다.
 - UV 2D Preview는 2만5천 삼각형/메시 수준으로 샘플링하여 초고밀도 모델의 브라우저 부담을 줄입니다. Export도 동일 샘플링이 적용됩니다.
 - 파일 무결성·재질 호환성은 내보내기 옵션마다 다릅니다. FBX/DAE/3DS처럼 구조 복잡한 자산에서는 애니메이션과 재질을 완전히 재현하지 못할 수 있습니다.
@@ -134,3 +138,15 @@ features TODO: see HANDOFF.md
 - [GitHub Pages 배포 가이드](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 
 MIT License.
+
+
+## v0.2.0 변경 내역 (2026-10-08)
+
+- UV Stretch Heatmap 추가: 면별 UV 면적/메시 표면적 상대 편차, 분석 예산 및 예외처리
+- Vertex RGBA 시각화: RGB + 개별 R/G/B/A 그레이스케일, 원본 색상 비파괴
+- Tangent Vector 디버그 표시: tangent 속성을 가진 메시 (15k vertices 한도)
+- VFX UV Flow 프리셋 8종 추가 (Right/Left/Up/Down/Aura/Waterfall/Heat/Diagonal)
+- 멀티 머티리얼 geometry.groups 디버그 뷰 이슈 수정
+- 라이브 파일 교체 시 GPU 디버그 지오메트리 정리, 13개 단위 테스트
+
+> GitHub Pages는 기존 설정 `main / (root)`를 유지하고, `src/mesh-diagnostics.js` 파일도 함께 업로드해야 합니다.

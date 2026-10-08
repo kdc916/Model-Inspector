@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
+import { VertexTangentsHelper } from 'three/addons/helpers/VertexTangentsHelper.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { DDSLoader } from 'three/addons/loaders/DDSLoader.js';
 import { LocalModelLoader } from './model-loaders.js';
 import { createDemo, makeCheckerTexture } from './procedural.js';
 import { drawUVLayout, inspectMeshes } from './analysis.js';
 import { finite, modelStats, textureOffsetFromVisual, triangleCount } from './uv-utils.js';
+import { analyzeUVStretch, extractVertexColors } from './mesh-diagnostics.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -15,7 +17,8 @@ const clamp = (v,lo,hi) => Math.min(hi,Math.max(lo,v));
 const light = new THREE.Color();
 const state = {
   model:null, meshes:[], selected:null, originalMats:new Map(),
-  debugMats:new Map(), wireHelpers:[], normalHelper:null,
+  debugMats:new Map(), wireHelpers:[], normalHelper:null, tangentHelper:null,
+  originalGeos:new Map(), previewGeos:new Map(), stretchCache:new Map(),
   mode:'material', uvChannel:0, channelCount:1, load:null,
   localLoader:new LocalModelLoader(),
   sceneMixer:null, clips:[], currentAction:null, animationPlaying:false,
@@ -65,14 +68,67 @@ function setLoading(visible,message='모델을 불러오고 있습니다.'){
 }
 function gatherMeshes(root){const list=[];root?.traverse(obj=>{if(obj.isMesh && obj.geometry?.getAttribute('position')) list.push(obj)});return list;}
 function materials(mesh){return Array.isArray(mesh.material)?mesh.material:[mesh.material];}
+function getStretch(mesh) {
+  let byChannel=state.stretchCache.get(mesh);
+  if(!byChannel){byChannel=new Map();state.stretchCache.set(mesh,byChannel);}
+  if(!byChannel.has(state.uvChannel)){
+    mesh.updateWorldMatrix(true,false);
+    byChannel.set(state.uvChannel,analyzeUVStretch(
+      state.originalGeos.get(mesh)||mesh.geometry,state.uvChannel,mesh.matrixWorld.elements));
+  }
+  return byChannel.get(state.uvChannel);
+}
+function restorePreviewGeometry(mesh){
+  const existing=state.previewGeos.get(mesh);
+  if(!existing)return;
+  mesh.geometry=state.originalGeos.get(mesh);
+  existing.geometry.dispose();state.previewGeos.delete(mesh);
+}
+function ensurePreviewGeometry(mesh){
+  const key=state.mode==='stretch'?`stretch:${state.uvChannel}`:
+    state.mode==='vertex'?`vertex:${$('#vertexChannel').value}`:null;
+  const existing=state.previewGeos.get(mesh);
+  if(existing?.key===key)return;
+  restorePreviewGeometry(mesh);
+  if(!key)return;
+  const source=state.originalGeos.get(mesh);
+  if(state.mode==='stretch'){
+    const report=getStretch(mesh);
+    if(!report.colors)return; // Too large, missing or invalid UV: neutral material fallback.
+    const geo=source.index?source.toNonIndexed():source.clone();
+    geo.setAttribute('color',new THREE.BufferAttribute(report.colors,3));
+    mesh.geometry=geo;state.previewGeos.set(mesh,{key,geometry:geo});
+  }else{
+    const geo=source.clone();
+    const colors=extractVertexColors(source,$('#vertexChannel').value);
+    if(!colors){geo.dispose();return;}
+    geo.setAttribute('color',new THREE.BufferAttribute(colors,3));
+    mesh.geometry=geo;state.previewGeos.set(mesh,{key,geometry:geo});
+  }
+}
+function assignDebugMaterial(mesh,material){
+  // Multi-material BufferGeometry uses group.materialIndex. Supplying a single
+  // material can cause all groups except the first to disappear in Three.js.
+  const original=state.originalMats.get(mesh);
+  mesh.material=Array.isArray(original)?original.map(()=>material):material;
+}
 function updateDisplayMaterial(){
   for(const mesh of state.meshes){
+    ensurePreviewGeometry(mesh);
     const cache=state.debugMats.get(mesh)||{};
     if(state.mode==='material'){
       mesh.material=cache.working??state.originalMats.get(mesh);
     } else if(state.mode==='normal'){
       if(!cache.normal) cache.normal=new THREE.MeshNormalMaterial({side:THREE.DoubleSide});
-      mesh.material=cache.normal;
+      assignDebugMaterial(mesh,cache.normal);
+    } else if(state.mode==='stretch'||state.mode==='vertex'){
+      const key=state.mode;
+      if(!cache[key])cache[key]=new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide,color:0xffffff});
+      // A missing attribute is treated as neutral gray in the preview.
+      if(!state.previewGeos.has(mesh)){
+        if(!cache.neutral)cache.neutral=new THREE.MeshBasicMaterial({color:0x59616c,side:THREE.DoubleSide});
+        assignDebugMaterial(mesh,cache.neutral);
+      } else assignDebugMaterial(mesh,cache[key]);
     } else {
       const name=state.mode;
       if(!cache[name]){
@@ -81,13 +137,15 @@ function updateDisplayMaterial(){
         cache[name]=new THREE.MeshBasicMaterial({map:tex,color:0xffffff,side:THREE.DoubleSide});
       }
       cache[name].map.channel=state.uvChannel;
-      mesh.material=cache[name];
+      assignDebugMaterial(mesh,cache[name]);
     }
     state.debugMats.set(mesh,cache);
   }
   state.offsetsDirty=true;
-  $('#viewModeHud').textContent={material:'PBR / MATERIAL',checker:'UV / CHECKER',uvgrid:'UV / GRID',normal:'GEOMETRY / NORMALS'}[state.mode];
+  $('#viewModeHud').textContent={material:'PBR / MATERIAL',checker:'UV / CHECKER',uvgrid:'UV / GRID',normal:'GEOMETRY / NORMALS',stretch:'UV / STRETCH HEATMAP',vertex:'VERTEX / COLOR'}[state.mode];
   $$('.tool[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.mode));
+  $('#diagnosticLegend').hidden=state.mode!=='stretch';
+  $('#vertexOptions').hidden=state.mode!=='vertex';
   applyTextureParameters();
 }
 function setMode(mode){state.mode=mode;updateDisplayMaterial();}
@@ -95,10 +153,13 @@ function disposeModel(){
   state.uvPlaying=false;state.animationPlaying=false;state.sceneMixer?.stopAllAction();state.sceneMixer=null;
   $('#btnUVPlay').textContent='▶ UV Flow Play';$('#btnAnimToggle').textContent='▶ Play';
   if(state.normalHelper){state.normalHelper.parent?.remove(state.normalHelper);state.normalHelper.dispose?.();state.normalHelper=null;}
+  if(state.tangentHelper){state.tangentHelper.parent?.remove(state.tangentHelper);state.tangentHelper.dispose?.();state.tangentHelper=null;}
   disposeWireHelpers();
+  for(const mesh of [...state.previewGeos.keys()])restorePreviewGeometry(mesh);
+  state.originalGeos.clear();state.stretchCache.clear();
   const oldOriginals=[...state.originalMats.values()];
   for(const [mesh, cache] of state.debugMats){
-    for(const key of ['working','normal','checker','uvgrid']){
+    for(const key of ['working','normal','checker','uvgrid','stretch','vertex','neutral']){
       const mats=cache[key] ? (Array.isArray(cache[key])?cache[key]:[cache[key]]) : [];
       for(const mat of mats){
         if(key==='checker'||key==='uvgrid')mat.map?.dispose();
@@ -140,6 +201,7 @@ function installModel(root,meta={},clips=[]){
   for(const [i,mesh] of state.meshes.entries()){
     if(!mesh.name)mesh.name=`Mesh ${i+1}`;
     state.originalMats.set(mesh,mesh.material);
+    state.originalGeos.set(mesh,mesh.geometry);
     if(mesh.geometry && !mesh.geometry.hasAttribute('normal'))mesh.geometry.computeVertexNormals();
   }
   scene.add(root);
@@ -149,7 +211,7 @@ function installModel(root,meta={},clips=[]){
   $('#assetTitle').textContent=(meta.name||root.name||'MODEL').slice(0,42).toUpperCase();
   $('#assetMeta').textContent=`${meta.format||'DEMO'} · ${state.meshes.length} meshes`;
   state.mode='material';updateDisplayMaterial();
-  updateStats();updateHierarchy();updateInspector();updateAnimSelect();updateWireframe();updateNormalHelper();fitCamera(root);
+  updateStats();updateHierarchy();updateInspector();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);
   status(`${meta.name||'데모 모델'} 준비 완료 · ${fmt(modelStats(state.meshes).triangles)} triangles`);
 }
 function fitCamera(target){
@@ -187,7 +249,7 @@ function updateHierarchy(){
   for(const mesh of state.meshes){
     const button=document.createElement('button');button.type='button';button.className='mesh-item'+(mesh===state.selected?' selected':'');
     const name=document.createElement('span');name.className='mesh-name';name.textContent=mesh.name;
-    const tris=document.createElement('span');tris.className='mesh-tris';tris.textContent=compact(triangleCount(mesh.geometry));
+    const tris=document.createElement('span');tris.className='mesh-tris';tris.textContent=compact(triangleCount(state.originalGeos.get(mesh)||mesh.geometry));
     const icon=document.createElement('span');icon.className='mesh-ico';icon.textContent='⬡';
     button.append(icon,name,tris);button.title=mesh.name;
     button.addEventListener('click',()=>selectMesh(mesh));tree.appendChild(button);
@@ -195,12 +257,13 @@ function updateHierarchy(){
 }
 function compact(n){return n>=1000000?(n/1000000).toFixed(1)+'m':n>=1000?(n/1000).toFixed(1)+'k':String(n);}
 function selectMesh(mesh){
-  state.selected=mesh||null;updateHierarchy();updateInspector();updateNormalHelper();
+  state.selected=mesh||null;updateHierarchy();updateInspector();updateNormalHelper();updateTangentHelper();
   if($('#applyScope').value==='selected'&&!state.selected)$('#applyScope').value='all';
 }
 function inspected(){return state.selected?[state.selected]:state.meshes;}
 function updateInspector(){
-  const selected=state.selected, meshes=inspected(), stat=inspectMeshes(meshes,state.uvChannel);
+  const selected=state.selected, meshes=inspected();
+  const stat=inspectMeshes(meshes.map(m=>({geometry:state.originalGeos.get(m)||m.geometry})),state.uvChannel);
   $('#selectedName').textContent=selected?.name||'All meshes';
   const bounds=state.model?new THREE.Box3().setFromObject(selected||state.model):new THREE.Box3();
   const dims=bounds.isEmpty()?null:bounds.getSize(new THREE.Vector3());
@@ -210,7 +273,9 @@ function updateInspector(){
     ['Normals',stat.missingNormals===0?'Present':`${stat.missingNormals} missing`],
     ['UV channel',`UV${state.uvChannel}`],
     ['Dimensions',dims?[dims.x,dims.y,dims.z].map(v=>v.toFixed(3)).join(' × '):'—'],
-    ['Materials',selected?materials(selected).length:[...new Set(meshes.flatMap(m=>materials(m)))].length]
+    ['Materials',selected?(Array.isArray(state.originalMats.get(selected))?state.originalMats.get(selected).length:1):[...new Set(meshes.flatMap(m=>{const a=state.originalMats.get(m);return Array.isArray(a)?a:[a];}))].length],
+    ['Vertex color',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('color')).length}/${meshes.length} meshes`],
+    ['Tangents',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('tangent')).length}/${meshes.length} meshes`]
   ];
   const props=$('#inspectProperties');props.replaceChildren();
   for(const [k,v] of entries){const row=document.createElement('div');row.className='property-row';
@@ -227,6 +292,22 @@ function updateInspector(){
   }
   if(stat.missingNormals)info.push(`<p class="warn">⚠ ${stat.missingNormals} mesh normals regenerated for preview</p>`);
   health.innerHTML=info.join('');
+  // Avoid a long synchronous stall when an asset contains dozens of dense meshes.
+  const reports=[];let budget=180000, omitted=0;
+  for(const mesh of meshes){
+    const faces=triangleCount(state.originalGeos.get(mesh)||mesh.geometry);
+    if(faces>budget){omitted++;continue;}
+    reports.push(getStretch(mesh));budget-=faces;
+  }
+  const available=reports.filter(r=>r.validFaces>0);
+  const valid=available.reduce((sum,r)=>sum+r.validFaces,0);
+  const bad=reports.reduce((sum,r)=>sum+r.outlierFaces,0);
+  const degenerate=reports.reduce((sum,r)=>sum+r.degenerateUV,0);
+  const partial=omitted?` · ${omitted} mesh(es) omitted (180k triangle budget)`:'';
+  $('#stretchHealth').textContent=available.length?
+    `UV stretch: ${fmt(bad)} / ${fmt(valid)} faces differ >0.75 stops · Zero-area UV: ${fmt(degenerate)}${partial}`:
+    omitted?'UV stretch: 180k triangle budget 초과 · 메시 단위로 선택하여 확인':
+    'UV stretch: 분석 가능한 UV 면이 없습니다.';
   const result=drawUVLayout($('#uvCanvas'),meshes,state.uvChannel);
   $('#uvStatus').textContent=`UV${state.uvChannel}`+(result?.skippedFaces?' · simplified':'');
 }
@@ -269,6 +350,17 @@ function updateNormalHelper(){
   const bbox=new THREE.Box3().setFromObject(mesh);const length=bbox.getSize(new THREE.Vector3()).length();
   state.normalHelper=new VertexNormalsHelper(mesh,Math.max(.002,length/120),0x80f5b2);
   scene.add(state.normalHelper);
+}
+function updateTangentHelper(){
+  if(state.tangentHelper){state.tangentHelper.parent?.remove(state.tangentHelper);state.tangentHelper.dispose?.();state.tangentHelper=null;}
+  if(!$('#toggleTangents').checked||!state.meshes.length)return;
+  const mesh=state.selected||state.meshes[0];
+  const geo=state.originalGeos.get(mesh)||mesh.geometry;
+  if(!geo.hasAttribute('tangent')){status('선택한 메시의 Tangent 데이터가 없습니다. DCC에서 Tangents 포함으로 내보내세요.');return;}
+  if((geo.getAttribute('position')?.count||0)>15000){status('Tangent 벡터는 15,000 vertices 이하에서 표시합니다.');return;}
+  const length=new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3()).length();
+  state.tangentHelper=new VertexTangentsHelper(mesh,Math.max(.002,length/120),0xf2b079);
+  scene.add(state.tangentHelper);
 }
 function scopeMeshes(){return $('#applyScope').value==='selected'&&state.selected?[state.selected]:state.meshes;}
 function makeWorkingMaterials(mesh){
@@ -455,6 +547,8 @@ function bindUI(){
   $('#toggleAxes').onchange=e=>axes.visible=e.target.checked;
   $('#toggleWire').onchange=updateWireframe;
   $('#toggleNormals').onchange=updateNormalHelper;
+  $('#toggleTangents').onchange=updateTangentHelper;
+  $('#vertexChannel').onchange=()=>{if(state.mode==='vertex')updateDisplayMaterial();};
   $('#toggleRotate').onchange=e=>controls.autoRotate=e.target.checked;
   $('#toggleDoubleSide').onchange=e=>{
     for(const mesh of state.meshes){
@@ -472,6 +566,15 @@ function bindUI(){
     const can=document.createElement('canvas');can.width=can.height=2048;
     drawUVLayout(can,inspected(),state.uvChannel,{exportMode:true});
     const a=document.createElement('a');a.href=can.toDataURL('image/png');a.download=`maxVFX-UV${state.uvChannel}-${Date.now()}.png`;a.click();status('UV 레이아웃을 PNG로 저장했습니다.');
+  };
+  $('#flowPreset').onchange=e=>{
+    const presets={right:[.3,0,1,1],left:[-.3,0,1,1],up:[0,.3,1,1],down:[0,-.3,1,1],aura:[.3,.12,2,1],waterfall:[0,-.7,1,2],heat:[.12,.35,2,2],diagonal:[.45,.45,1,1]};
+    const p=presets[e.target.value];if(!p)return;
+    ['flowX','flowY','repeatX','repeatY'].forEach((id,i)=>$('#'+id).value=p[i]);
+    state.flowPhaseX=state.flowPhaseY=0;
+    state.visualOffsetX=finite($('#offsetX').value);state.visualOffsetY=finite($('#offsetY').value);
+    state.offsetsDirty=true;applyTextureParameters();renderFlowArrow();
+    status(`UV Flow preset: ${e.target.selectedOptions[0].textContent}`);
   };
   $('#btnUVPlay').onclick=toggleUVAnimation;
   $('#btnUVReset').onclick=()=>{
@@ -534,6 +637,7 @@ function animate(){
   if(state.offsetsDirty)applyTextureParameters();
   controls.update();
   state.normalHelper?.update();
+  state.tangentHelper?.update();
   renderer.render(scene,camera);
   state.frameCount++;
   const t=performance.now();
