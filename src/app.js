@@ -18,6 +18,8 @@ import { overlayState, alphaMaskFactor, installAlphaShader, updateAlphaShaderUni
 import { TEXTURE_SLOTS, ORM_SLOTS, normalScalePair, scopedMaterialIndices, materialValue, alphaMaterialSettings } from './material-controls.js';
 import { FLOW_SLOTS,blendSettings,createSlotFlow,textureTransform,createTextureOverride,composeTextureTransform,flipbookAt,normalizePreset,MAX_PRESET_BYTES } from './production-core.js';
 import { exportPreset,importPreset,readControls,applyControlValues } from './preset-workflow.js';
+import { savePack, loadPack } from './production-package.js';
+import { CanvasRecorder, supportedMime, MAX_CAPTURE_SECONDS } from './capture-workflow.js';
 import { diagnoseMeshes } from './uv-diagnostics.js';
 import { createDiagnosticSnapshot, inspectGeometryPro, summarizeDiagnostics } from './diagnostics-pro.js';
 import { resolveShaderPreset } from './shader-presets.js';
@@ -42,9 +44,9 @@ const state = {
   uvPlaying:false, flowPhaseX:0, flowPhaseY:0, visualOffsetX:0, visualOffsetY:0,
   offsetsDirty:true, editableTextures:new WeakSet(), uploadedURLs:[],
   spin:false, fps:60, lastFpsUpdate:0, frameCount:0,
-  pointerDown:null, dragCount:0, loadGeneration:0, slotFiles:new Map(),
+  pointerDown:null, dragCount:0, loadGeneration:0, slotFiles:new Map(), slotFileBlobs:new Map(), shaderFileBlobs:new Map(),
   slotFlows:new Map(), textureTransforms:new Map(), flowSeconds:0, flipbookSeconds:0, textureKTX2:null,
-  compareLoader:null, compareRoot:null, compareMeta:null, shaderMaps:{noise:null,mask:null},shaderSeconds:0,shaderUploadSerial:{noise:0,mask:0}
+  compareLoader:null, compareRoot:null, compareMeta:null, compareBasePosition:null, compareMaterialStates:new Map(), shaderMaps:{noise:null,mask:null},shaderSeconds:0,shaderUploadSerial:{noise:0,mask:0}
 };
 const slotNames=TEXTURE_SLOTS;
 const textureMapSlots=TEXTURE_SLOTS;
@@ -81,6 +83,28 @@ bloomComposer.addPass(new RenderPass(scene,camera));
 const bloomPass=new UnrealBloomPass(new THREE.Vector2(512,512),.8,.2,1);
 bloomPass.enabled=false;bloomComposer.addPass(bloomPass);bloomComposer.addPass(new OutputPass());
 const depthPreview=new DepthPreview(THREE,renderer,scene,camera);
+const capture=new CanvasRecorder({
+  onStop:blob=>{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`maxVFX-capture-${Date.now()}.webm`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);status('WebM 녹화 저장 완료');},
+  onError:error=>status(`녹화 오류: ${error?.message||error}`,true),
+  onState:recording=>{const button=$('#btnRecord');if(button){button.textContent=recording?'■ 녹화 중지':'● WebM 녹화';button.classList.toggle('active',recording);}const label=$('#recordStatus');if(label)label.textContent=recording?`녹화 중 · 최대 ${MAX_CAPTURE_SECONDS}초`:'WebM · 최대 30초 · 마이크 사용 안 함';}
+});
+let zipLibraryPromise=null;
+async function getZipLibrary(){
+  zipLibraryPromise ||= import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm').then(mod=>mod.default||mod).catch(error=>{zipLibraryPromise=null;throw new Error('ZIP 라이브러리 로딩 실패. 인터넷 연결을 확인하세요: '+error.message);});
+  return zipLibraryPromise;
+}
+function currentPreset(){return exportPreset(readControls(presetFields,getField),Object.fromEntries(state.slotFlows),Object.fromEntries(state.textureTransforms));}
+function downloadBlob(name,blob){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+function applyPresetValues(p){
+  applyControlValues(p.ui,getField);state.slotFlows=new Map(Object.entries(p.slotFlows));loadSlotFlow();
+  state.textureTransforms=new Map(Object.entries(p.textureTransforms||{}));loadManualTransform();
+  $('#valueAxisSize').textContent=Number($('#axisSize').value).toFixed(2);
+  $('#valuePivotSize').textContent=Number($('#pivotSize').value).toFixed(2);updateSceneGuides();
+  state.flowPhaseX=state.flowPhaseY=state.flowSeconds=state.flipbookSeconds=0;
+  $('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';
+  applyMaterialInputs(scopeMeshes());updateBloom();setAlphaOverlay($('#toggleAlphaOverlay').checked);state.offsetsDirty=true;
+  applyTextureParameters();updateShaderStudioUI();
+}
 let diagnosticWorker=null,diagnosticJob=0,latestDiagnostic=null;
 function cancelDiagnostics(silent=false){
   ++diagnosticJob;
@@ -166,14 +190,14 @@ function updateShaderStudioUI({rebuild=true}={}){
   }}
 }
 async function loadShaderTexture(slot,file){
-  if(!file)return;
-  if(!/\.(png|jpe?g|webp|bmp)$/i.test(file.name)||file.size>32*1024*1024){status('Shader Studio: PNG/JPG/WebP/BMP · 최대 32MB 이미지가 필요합니다.',true);return;}
+  if(!file)return false;
+  if(!/\.(png|jpe?g|webp|bmp)$/i.test(file.name)||file.size>32*1024*1024){status('Shader Studio: PNG/JPG/WebP/BMP · 최대 32MB 이미지가 필요합니다.',true);return false;}
   const serial=++state.shaderUploadSerial[slot];
   const uri=URL.createObjectURL(file);
   try{const tex=await new THREE.TextureLoader().loadAsync(uri);
-    if(serial!==state.shaderUploadSerial[slot]){tex.dispose();return;}tex.wrapS=tex.wrapT=THREE.RepeatWrapping;tex.colorSpace=THREE.NoColorSpace;tex.flipY=$('#flipTextureY').checked;tex.needsUpdate=true;
-    state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=tex;$('#fxLayerStatus').textContent=`${slot}: ${file.name} · 브라우저에서만 사용`;updateShaderStudioUI();
-  }catch(e){status(`Shader Texture 실패: ${e.message}`,true);}finally{URL.revokeObjectURL(uri);}
+    if(serial!==state.shaderUploadSerial[slot]){tex.dispose();return false;}tex.wrapS=tex.wrapT=THREE.RepeatWrapping;tex.colorSpace=THREE.NoColorSpace;tex.flipY=$('#flipTextureY').checked;tex.needsUpdate=true;
+    state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=tex;state.shaderFileBlobs.set(slot,file);$('#fxLayerStatus').textContent=`${slot}: ${file.name} · 브라우저에서만 사용`;updateShaderStudioUI();return true;
+  }catch(e){status(`Shader Texture 실패: ${e.message}`,true);return false;}finally{URL.revokeObjectURL(uri);}
 }
 const flowFields={uv:'slotFlowUV',speedX:'slotFlowX',speedY:'slotFlowY',offsetX:'slotOffsetX',offsetY:'slotOffsetY',repeatX:'slotRepeatX',repeatY:'slotRepeatY'};
 const presetFields=[...shaderControls,'matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','toggleAxes','togglePivot','axisSize','pivotSize','pivotScope','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
@@ -373,6 +397,7 @@ function updateDisplayMaterial(){
 }
 function setMode(mode){state.mode=mode;updateDisplayMaterial();}
 function disposeModel(){
+  capture.cancel();
   cancelDiagnostics(true);latestDiagnostic=null;$('#btnDiagExport').disabled=true;
   state.loadGeneration++;
   state.uvPlaying=false;state.animationPlaying=false;state.sceneMixer?.stopAllAction();state.sceneMixer=null;
@@ -417,7 +442,7 @@ function disposeModel(){
   disposeComparison();
   state.localLoader.dispose();
   for(const u of state.uploadedURLs)URL.revokeObjectURL(u);
-  state.uploadedURLs=[];state.editableTextures=new WeakSet();state.slotFiles.clear();
+  state.uploadedURLs=[];state.editableTextures=new WeakSet();state.slotFiles.clear();state.slotFileBlobs.clear();
   $$('.texture-slot').forEach(el=>{el.classList.remove('loaded');el.querySelector('small').textContent='Upload image';});
   state.model=null;state.meshes=[];state.selected=null;state.clips=[];state.flowSeconds=0;state.flipbookSeconds=0;
 }
@@ -781,17 +806,17 @@ function renderFlowArrow(){
   $('#flowVector').textContent=`X ${sx>=0?'+':''}${sx.toFixed(2)} · Y ${sy>=0?'+':''}${sy.toFixed(2)}`;
 }
 async function applyUpload(slot,file){
-  if(!file||!state.meshes.length){status('먼저 모델을 불러오세요.',true);return;}
+  if(!file||!state.meshes.length){status('먼저 모델을 불러오세요.',true);return false;}
   if(!file.type.startsWith('image/') && !/\.(png|jpe?g|bmp|webp|gif|avif|tga|dds|ktx2)$/i.test(file.name)){
-    status('지원하는 이미지 형식: PNG/JPG/WebP/BMP/AVIF/TGA/DDS/KTX2',true);return;
+    status('지원하는 이미지 형식: PNG/JPG/WebP/BMP/AVIF/TGA/DDS/KTX2',true);return false;
   }
   const generation=state.loadGeneration;
   let url=URL.createObjectURL(file);state.uploadedURLs.push(url);
   let tex;
   const uploadLoader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():
     /\.ktx2$/i.test(file.name)?getTextureKTX2Loader():new THREE.TextureLoader();
-  try{tex=await uploadLoader.loadAsync(url);}catch(err){status(`텍스처 로드 실패: ${err.message}`,true);return;}
-  if(generation!==state.loadGeneration){tex.dispose();return;}
+  try{tex=await uploadLoader.loadAsync(url);}catch(err){status(`텍스처 로드 실패: ${err.message}`,true);return false;}finally{URL.revokeObjectURL(url);state.uploadedURLs=state.uploadedURLs.filter(u=>u!==url);}
+  if(generation!==state.loadGeneration){tex.dispose();return false;}
   if(!/\.ktx2$/i.test(file.name))tex.flipY=$('#flipTextureY').checked;
   tex.colorSpace=['map','emissiveMap'].includes(slot)?THREE.SRGBColorSpace:THREE.NoColorSpace;
   tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
@@ -811,11 +836,11 @@ async function applyUpload(slot,file){
   tex.dispose();
   const element=$(`.texture-slot[data-slot="${slot}"]`);
   element.classList.add('loaded');element.querySelector('small').textContent=file.name;
-  state.slotFiles.set(slot,file.name);
+  state.slotFiles.set(slot,file.name);state.slotFileBlobs.set(slot,file);
   $('#matTexSlot').value=slot;loadManualTransform(); // Show the uploaded texture's independent transform immediately.
   if(slot==='alphaMap')applyMaterialInputs(targets,'matAlphaMode');
   state.offsetsDirty=true;applyTextureParameters();setMode('material');
-  status(`${file.name} → ${slot} (${targets.length} meshes) 적용`);
+  status(`${file.name} → ${slot} (${targets.length} meshes) 적용`);return true;
 }
 async function uploadORM(file){
   if(!file||!state.meshes.length){status('먼저 모델을 불러오세요.',true);return;}
@@ -827,7 +852,7 @@ async function uploadORM(file){
   const loader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():
     /\.ktx2$/i.test(file.name)?getTextureKTX2Loader():new THREE.TextureLoader();
   let source;
-  try{source=await loader.loadAsync(url);}catch(e){status('ORM 로딩 실패: '+e.message,true);return;}
+  try{source=await loader.loadAsync(url);}catch(e){status('ORM 로딩 실패: '+e.message,true);return;}finally{URL.revokeObjectURL(url);state.uploadedURLs=state.uploadedURLs.filter(u=>u!==url);}
   if(generation!==state.loadGeneration){source.dispose();return;}
   source.colorSpace=THREE.NoColorSpace;if(!/\.ktx2$/i.test(file.name))source.flipY=$('#flipTextureY').checked;
   source.wrapS=source.wrapT=THREE.RepeatWrapping;
@@ -840,7 +865,7 @@ async function uploadORM(file){
       if(prev&&state.editableTextures.has(prev))prev.dispose();
       const el=$(`.texture-slot[data-slot="${slot}"]`);
       el.classList.add('loaded');el.querySelector('small').textContent=`ORM: ${file.name}`;
-      state.slotFiles.set(slot,file.name);
+      state.slotFiles.set(slot,file.name);state.slotFileBlobs.set(slot,file);
     }
     mat.needsUpdate=true;
   }
@@ -860,7 +885,7 @@ function clearTextureSlot(slot){
   }
   const label=$(`.texture-slot[data-slot="${slot}"]`);
   label.classList.remove('loaded');label.querySelector('small').textContent='Upload image';
-  state.slotFiles.delete(slot);
+  state.slotFiles.delete(slot);state.slotFileBlobs.delete(slot);
   if(state.mode==='material')updateDisplayMaterial();
   status(`${slot} 텍스처 해제 완료 (선택 범위)`);
 }
@@ -888,7 +913,7 @@ function resetMaterials(){
     if(state.mode==='material')mesh.material=state.originalMats.get(mesh);
   }
   $$('.texture-slot').forEach(el=>{el.classList.remove('loaded');el.querySelector('small').textContent='Upload image';});
-  state.slotFiles.clear();resetMaterialUI();$('#ormFileName').textContent='Not loaded';
+  state.slotFiles.clear();state.slotFileBlobs.clear();resetMaterialUI();$('#ormFileName').textContent='Not loaded';
   state.flowSeconds=state.flipbookSeconds=0;state.slotFlows.clear();loadSlotFlow();
   state.visualOffsetX=state.visualOffsetY=0;state.flowPhaseX=state.flowPhaseY=0;
   $('#offsetX').value=0;$('#offsetY').value=0;
@@ -915,6 +940,8 @@ function updateDiagnostics(){
 }
 function disposeComparison(){
   depthPreview.setReferenceRoot(null);
+  state.compareMaterialStates.clear();state.compareBasePosition=null;
+  depthPreview.setReferenceRoot(null);
   if(state.compareRoot){scene.remove(state.compareRoot);
     const geometries=new Set(),mats=new Set(),textures=new Set();
     state.compareRoot.traverse(o=>{if(o.geometry)geometries.add(o.geometry);
@@ -925,19 +952,50 @@ function disposeComparison(){
   state.compareLoader?.dispose();state.compareRoot=null;state.compareLoader=null;state.compareMeta=null;
   $('#comparisonResults').textContent='비교 모델을 불러오면 폴리곤·UV·알파 차이를 표시합니다.';
 }
+function applyCompareView(){
+  $('#valueCompareOpacity').textContent=Number($('#compareOpacity').value).toFixed(2);
+  const root=state.compareRoot;if(!root)return;
+  const mode=$('#compareDisplayMode').value;
+  root.visible=$('#compareVisible').checked;
+  const base=state.compareBasePosition;
+  if(!base)return;
+  root.position.copy(base);
+  // Side mode already offsets comparison on initial import. Overlay aligns world-space bounds centers.
+  if(mode==='overlay'&&state.model){
+    root.updateMatrixWorld(true);state.model.updateMatrixWorld(true);
+    const primary=new THREE.Box3().setFromObject(state.model), secondary=new THREE.Box3().setFromObject(root);
+    if(!primary.isEmpty()&&!secondary.isEmpty()){
+      const centerA=primary.getCenter(new THREE.Vector3()),centerB=secondary.getCenter(new THREE.Vector3());
+      root.position.add(centerA.sub(centerB));
+    }
+  }
+  const strength=clamp(Number($('#compareOpacity').value)||0,0,1);
+  const fade=mode==='overlay'?strength:1;
+  root.traverse(obj=>{
+    if(!obj.isMesh)return;
+    for(const mat of materials(obj)){
+      if(!mat||!mat.isMaterial)continue;
+      if(!state.compareMaterialStates.has(mat))state.compareMaterialStates.set(mat,{opacity:mat.opacity,transparent:mat.transparent,depthWrite:mat.depthWrite});
+      const src=state.compareMaterialStates.get(mat);
+      mat.opacity=src.opacity*fade;mat.transparent=src.transparent||fade<1;mat.depthWrite=fade<1?false:src.depthWrite;mat.needsUpdate=true;
+    }
+  });
+  root.updateMatrixWorld(true);depthPreview.setReferenceRoot(root);
+}
 async function openComparison(files){
   if(!files.length||!state.model)return;
   const loader=new LocalModelLoader(renderer);
   try{
     status('비교 모델 로딩 중...');const result=await loader.load(files);
-    disposeComparison();state.compareRoot=result.root;state.compareLoader=loader;state.compareMeta=result;depthPreview.setReferenceRoot(result.root);updateShaderStudioUI({rebuild:false});
+    disposeComparison();state.compareRoot=result.root;state.compareLoader=loader;state.compareMeta=result;state.compareBasePosition=result.root.position.clone();depthPreview.setReferenceRoot(result.root);updateShaderStudioUI({rebuild:false});
     const primaryBox=new THREE.Box3().setFromObject(state.model);
     const secondaryBox=new THREE.Box3().setFromObject(result.root);
     if(!primaryBox.isEmpty()&&!secondaryBox.isEmpty()){
       const gap=Math.max(primaryBox.getSize(new THREE.Vector3()).length()*.1,.2);
       result.root.position.x+=primaryBox.max.x-secondaryBox.min.x+gap;
     }
-    scene.add(result.root);result.root.updateMatrixWorld(true);
+    state.compareBasePosition=result.root.position.clone();
+    scene.add(result.root);result.root.updateMatrixWorld(true);$('#compareDisplayMode').value='side';$('#compareVisible').checked=true;$('#compareOpacity').value='1';applyCompareView();
     const c=buildComparison(state.model,result.root,state.uvChannel),d=c.comparison.delta;
     $('#comparisonResults').textContent=`A ${c.left.name} vs B ${c.right.name}\n`+
       Object.entries(d).map(([k,v])=>`${k}: ${v.left.toLocaleString()} → ${v.right.toLocaleString()} (${v.diff>=0?'+':''}${v.diff.toLocaleString()})`).join('\n');
@@ -985,7 +1043,7 @@ function bindUI(){
   $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
   $('#btnAlphaReport').onclick=()=>{
     const inspectedMeshes=inspected();
-    const report={tool:'maxVFX Model Inspector',version:'0.9.5',asset:$('#assetTitle').textContent,
+    const report={tool:'maxVFX Model Inspector',version:'1.0.0',asset:$('#assetTitle').textContent,
       warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
       meshes:inspectedMeshes.map(mesh=>{
         const geo=state.originalGeos.get(mesh)||mesh.geometry;
@@ -1120,25 +1178,43 @@ function bindUI(){
     applyMaterialInputs(scopeMeshes());updateBloom();updateShaderStudioUI();
     status(`${p.label} 프리뷰 프리셋 적용 (Unity/Unreal 결과 보장 아님)`);
   };
-  $('#btnPresetExport').onclick=()=>{
-    const ui=readControls(presetFields,getField);
-    const slotFlows=Object.fromEntries(state.slotFlows);
-    downloadJSON('maxVFX-material-preset-v0.9.json',exportPreset(ui,slotFlows,Object.fromEntries(state.textureTransforms)));status('프리셋 JSON 저장 완료');
-  };
+  $('#btnPresetExport').onclick=()=>{downloadJSON('maxVFX-material-preset-v1.0.json',currentPreset());status('프리셋 JSON 저장 완료');};
   $('#btnPresetImport').onclick=()=>$('#presetFileInput').click();
   $('#presetFileInput').onchange=async e=>{
     const f=e.target.files?.[0];e.target.value='';if(!f)return;
-    try{const p=await importPreset(f);applyControlValues(p.ui,getField);
-      state.slotFlows=new Map(Object.entries(p.slotFlows));loadSlotFlow();
-      state.textureTransforms=new Map(Object.entries(p.textureTransforms||{}));loadManualTransform();
-      $('#valueAxisSize').textContent=Number($('#axisSize').value).toFixed(2);
-      $('#valuePivotSize').textContent=Number($('#pivotSize').value).toFixed(2);
-      updateSceneGuides();
-      state.flowPhaseX=state.flowPhaseY=state.flowSeconds=state.flipbookSeconds=0;
-      $('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';
-      const targets=scopeMeshes();applyMaterialInputs(targets);updateBloom();setAlphaOverlay($('#toggleAlphaOverlay').checked);state.offsetsDirty=true;
-      applyTextureParameters();updateShaderStudioUI();status('프리셋 적용 완료. Shader Studio 텍스처 파일은 별도로 올려야 합니다.');
-    }catch(err){status('프리셋 오류: '+err.message,true);}
+    try{const p=await importPreset(f);applyPresetValues(p);status('JSON 프리셋 적용 완료. 텍스처 포함 저장은 ZIP을 이용하세요.');}
+    catch(err){status('프리셋 오류: '+err.message,true);}
+  };
+  $('#btnPackExport').onclick=async()=>{
+    const button=$('#btnPackExport');button.disabled=true;status('프리셋과 텍스처를 ZIP으로 묶는 중...');
+    try{const JSZip=await getZipLibrary();const data=await savePack(currentPreset(),state.slotFileBlobs,state.shaderFileBlobs,JSZip);
+      downloadBlob('maxVFX-Material-Pack-v1.0.zip',data);status(`패키지 저장 완료 · ${(data.size/1024/1024).toFixed(2)}MB`);
+    }catch(e){status('ZIP 저장 오류: '+e.message,true);}finally{button.disabled=false;}
+  };
+  $('#btnPackImport').onclick=()=>$('#packFileInput').click();
+  $('#packFileInput').onchange=async event=>{
+    const file=event.target.files?.[0];event.target.value='';if(!file)return;
+    const button=$('#btnPackImport');button.disabled=true;
+    try{
+      if(!state.meshes.length)throw Error('프리셋을 적용할 모델을 먼저 불러오세요.');
+      const JSZip=await getZipLibrary();const {manifest,files}=await loadPack(file,JSZip);
+      applyPresetValues(manifest.preset);
+      // The pack is applied to every mesh; individual material overrides cannot be reconstructed from one UI snapshot.
+      $('#applyScope').value='all';$('#matSlotIndex').value='all';
+      let errors=0;
+      for(const entry of files){
+        try{const ok=entry.kind==='material'?await applyUpload(entry.slot,entry.file):await loadShaderTexture(entry.slot,entry.file);if(!ok)errors++;}
+        catch(error){errors++;console.warn('Pack texture import',entry.slot,error);}
+      }
+      state.offsetsDirty=true;applyTextureParameters();updateShaderStudioUI();
+      status(`프리셋 ZIP 로드 완료 · 이미지 ${files.length}개${errors?` · 오류 ${errors}개`:''}`,!!errors);
+    }catch(e){status('ZIP 불러오기 오류: '+e.message,true);}finally{button.disabled=false;}
+  };
+  for(const id of ['compareDisplayMode','compareOpacity','compareVisible'])$('#'+id).addEventListener('input',applyCompareView);
+  $('#btnRecord').onclick=()=>{
+    if(capture.active){capture.stop();return;}
+    try{capture.start(renderer.domElement);status('WebM 녹화 중 · 최대 30초 · 화면의 3D 캔버스만 저장합니다.');}
+    catch(e){status('녹화 시작 실패: '+e.message,true);}
   };
   $('#btnCompareOpen').onclick=()=>$('#compareFileInput').click();
   $('#compareFileInput').onchange=e=>{openComparison(Array.from(e.target.files||[]));e.target.value='';};
@@ -1175,12 +1251,12 @@ function bindUI(){
   $('#fxNoiseFile').onchange=e=>{loadShaderTexture('noise',e.target.files?.[0]);e.target.value='';};
   $('#fxMaskFile').onchange=e=>{loadShaderTexture('mask',e.target.files?.[0]);e.target.value='';};
   for(const slot of ['noise','mask'])$(slot==='noise'?'#fxClearNoise':'#fxClearMask').onclick=()=>{
-    ++state.shaderUploadSerial[slot];state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=null;
+    ++state.shaderUploadSerial[slot];state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=null;state.shaderFileBlobs.delete(slot);
     $('#fxLayerStatus').textContent=`${slot} 텍스처 제거됨`;updateShaderStudioUI();
   };
   $('#fxReset').onclick=()=>{
     for(const [id,value] of Object.entries(SHADER_FIELD_DEFAULTS)){const el=$('#'+id);if(el.type==='checkbox')el.checked=Boolean(value);else el.value=value;}
-    for(const slot of ['noise','mask']){++state.shaderUploadSerial[slot];state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=null;}
+    for(const slot of ['noise','mask']){++state.shaderUploadSerial[slot];state.shaderMaps[slot]?.dispose();state.shaderMaps[slot]=null;state.shaderFileBlobs.delete(slot);}
     for(const id of shaderControls){const out=$('#out'+id[0].toUpperCase()+id.slice(1));if(out)out.textContent=Number($('#'+id).value).toFixed(2);}
     $('#fxLayerStatus').textContent='Shader Studio 초기화 완료';updateShaderStudioUI();
   };
@@ -1214,7 +1290,7 @@ function sizeRenderer(){
 }
 const resizeObserver=new ResizeObserver(sizeRenderer);resizeObserver.observe(viewport);
 function animate(){
-  requestAnimationFrame(animate);
+  requestAnimationFrame(animate);capture.enforceLimit();
   const dt=Math.min(frameClock.getDelta(),.08);
   if(state.animationPlaying&&state.sceneMixer)state.sceneMixer.update(dt);
   if(state.uvPlaying){

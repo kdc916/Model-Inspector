@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.9.5</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v1.0.0</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -239,14 +239,20 @@
       </section>
 
       <section class="tabpage" id="page-workflow">
-        <div class="section-title"><span>PRODUCTION WORKFLOW</span><span class="chip">0.8</span></div>
+        <div class="section-title"><span>PRODUCTION WORKFLOW</span><span class="chip">1.0</span></div>
         <div class="section-title separated"><span>PRESET</span></div>
         <div class="inline-actions"><button class="subtle" id="btnPresetExport">↓ 설정 JSON 저장</button><button class="subtle" id="btnPresetImport">↑ JSON 불러오기</button></div>
-        <div class="description">머티리얼 수치, UV Flow, Flipbook, 블렌딩·뷰 설정을 저장합니다. 이미지 파일 자체는 포함하지 않습니다.</div>
+        <div class="description">설정 JSON은 텍스처 미포함. 통합 ZIP은 Material/Shader Studio에 직접 업로드한 텍스처와 설정을 함께 저장합니다. 모델 원본은 제외합니다.</div>
+        <div class="inline-actions"><button class="primary" id="btnPackExport">↓ 텍스처+프리셋 ZIP</button><button class="subtle" id="btnPackImport">↑ ZIP 복원</button></div>
         <div class="section-title separated"><span>ASSET COMPARISON</span></div>
         <button class="primary full" id="btnCompareOpen">＋ 비교 모델 불러오기</button>
-        <div class="inline-actions"><button class="subtle" id="btnCompareFocus">⌕ 두 모델 맞춤</button><button class="subtle" id="btnCompareClear">× 비교 제거</button></div>
+        <div class="inline-actions"><button class="subtle" id="btnCompareFocus">⌕ 두 모델 맞춤</button><button class="subtle" id="btnCompareClear">× 비교 제거</button></div><div class="field"><label for="compareDisplayMode">Comparison layout</label><select id="compareDisplayMode"><option value="side">Side by side</option><option value="overlay">Overlay · align centers</option></select></div>
+        <div class="field"><label for="compareOpacity">B opacity (overlay) <output id="valueCompareOpacity">1.00</output></label><input id="compareOpacity" type="range" min="0" max="1" step="0.05" value="1"></div>
+        <label class="check material-check"><input type="checkbox" id="compareVisible" checked> Show model B</label>
         <div class="diagnostic-result" id="comparisonResults">현재 모델과 비교할 두 번째 모델을 선택하세요. 파일·종속 텍스처를 함께 선택할 수 있습니다.</div>
+        <div class="section-title separated"><span>VIEWPORT CAPTURE</span></div>
+        <button class="subtle full" id="btnRecord">● WebM 녹화</button>
+        <div class="description" id="recordStatus">WebM · 최대 30초 · 마이크 사용 안 함</div>
         <div class="section-title separated"><span>QA / OPTIMIZATION REPORT</span></div>
         <button class="subtle full" id="btnQAReport">↓ JSON 검수 리포트</button>
         <div class="description">모델별 트라이앵글·정점·UV·알파·노멀 검사 결과를 기록합니다. UV 중첩은 의도적일 수 있으며 절대 오류 판정이 아닙니다.</div>
@@ -258,7 +264,7 @@
   </aside>
 </div>
 <input id="fileInput" type="file" multiple accept=".glb,.gltf,.fbx,.obj,.mtl,.stl,.ply,.3ds,.dae,.3mf,.blend,.max,.bin,.png,.jpg,.jpeg,.webp,.tga,.dds,.ktx2,.bmp" hidden />
-<input id="compareFileInput" type="file" multiple accept=".fbx,.glb,.gltf,.obj,.mtl,.bin,.png,.jpg,.jpeg,.webp,.tga,.dds,.ktx2" hidden /><input id="presetFileInput" type="file" accept=".json,application/json" hidden /><input id="folderInput" type="file" multiple webkitdirectory directory hidden />
+<input id="packFileInput" type="file" accept=".zip,application/zip" hidden /><input id="compareFileInput" type="file" multiple accept=".fbx,.glb,.gltf,.obj,.mtl,.bin,.png,.jpg,.jpeg,.webp,.tga,.dds,.ktx2" hidden /><input id="presetFileInput" type="file" accept=".json,application/json" hidden /><input id="folderInput" type="file" multiple webkitdirectory directory hidden />
 <dialog id="helpDialog"><div class="modal-header"><strong>maxVFX Model Inspector</strong><button id="btnHelpClose" class="ghost" aria-label="닫기">✕</button></div><div class="modal-body"><h3>시작하기</h3><p>모델을 드래그하거나 <b>모델 열기</b>로 불러옵니다. glTF(.gltf)와 OBJ(.obj)는 이미지, .bin, .mtl 등 관련 파일을 함께 선택하거나 폴더 전체 선택을 이용하세요.</p><h3>UV / 텍스처 검사</h3><p>Checker/UV Grid/UV Stretch/Vertex RGB/Vertex Alpha를 전환하여 데이터를 검사합니다. <b>V.Alpha</b>는 Material / Checker / UV Grid 위에 겹쳐 켤 수 있습니다. 머티리얼의 Opaque/Blend/Additive/Clip을 조합해 확인하고, <b>UV & Flow</b>에서 X/Y 속도를 조절하세요. +X는 화면의 텍스처가 U+ 방향으로, +Y는 V+ 방향으로 이동하도록 보정합니다.</p><h3>Vertex Alpha 검증 / 3ds Max</h3><p><b>핑크 메시</b> = 실제로 로드된 Geometry에 Alpha가 없는 상태입니다. <b>흰색 메시</b> = RGBA A값이 1.0인 상태입니다. 3ds Max에서 Vertex Alpha(-2)에 페인트하고 Export FBX의 Vertex Colors 옵션을 켠 뒤 재수입하여 확인하세요. Exporter가 A를 전달하지 않은 경우 뷰어가 임의로 복원할 수는 없습니다.</p><h3>Blender / 3ds Max</h3><p><b>.blend</b>와 <b>.max</b>는 브라우저에서 직접 해석할 수 없습니다. Blender는 File → Export → glTF 2.0 (.glb), 3ds Max는 Export → FBX로 변환한 후 불러오세요. 동봉된 Blender 일괄 변환 스크립트도 사용할 수 있습니다.</p><h3>추가 머티리얼 옵션</h3><p>Packed ORM 이미지를 올리면 AO(R), Roughness(G), Metallic(B)에 자동 연결합니다. Normal Map Green 반전은 노멀 스케일 Y만 반전하며 원본 이미지를 수정하지 않습니다. 선택 메시의 Material ID별 편집을 지원합니다.</p><h3>단축 사용법</h3><p>좌클릭 회전 · 우클릭 패닝 · 휠 줌 · 메시 클릭하여 선택 · Fit으로 화면 맞춤. 원본 모델은 서버로 업로드되지 않습니다. 외부 라이브러리 로딩을 위해 인터넷 연결은 필요합니다.</p></div></dialog>
 <script>
 // No endless loading spinner when a CDN is blocked by the user's network.

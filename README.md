@@ -310,3 +310,13 @@ python -m http.server 8000
 - `render-state.js`(순수 렌더 블렌딩 상태), `scene-guides.js`(World/Pivot Gizmo), `alpha-preview.js`(알파 처리)를 분리해 회귀 테스트를 강화했습니다.
 
 **수동 검증 권장:** `Fx_Mesh_Circle01_AlphaSide.FBX`의 `V.Alpha + Checker + Opaque`, `V.Alpha + User Texture + Opaque`, `V.Alpha + Additive`, `V.Alpha OFF 복구`, 메시 회전/애니메이션의 피벗 방향과 Gizmo 크기를 Edge/Chrome에서 확인하세요. 이 로컬 테스트 환경은 Three.js CDN 접근이 차단되어 실시간 WebGL 픽셀 캡처가 아직 검증되지 않았습니다.
+
+## v1.0.0 Production Release — portable preview packs / comparison / capture
+
+**Workflow → 텍스처+프리셋 ZIP** saves Material tab uploads, Shader Studio Noise/Mask uploads and UI preset values in one `.zip`. **Workflow → ZIP 복원** loads this package into the current model. 3D mesh files and original textures embedded in imported FBX/GLB are not included. The package needs an already loaded model; on import material images apply to all meshes, not individual Material ID selections. Safe paths, sizes and slot names are validated. ZIP actions lazily load JSZip 3.10.1 from a public CDN.
+
+**ASSET COMPARISON** now includes Side by side / Overlay modes, B opacity slider, and B show/hide. Overlay aligns bounds centers (not geometry registration); it does not modify the actual model A mesh.
+
+**VIEWPORT CAPTURE** records the WebGL canvas as `.webm` using the browser MediaRecorder API (when supported). Max 30s/160 MB, no audio, no desktop capture. The video records the 3D canvas, not HTML UI controls or panels.
+
+**Testing:** `npm test` runs 105 unit checks; `npm run test:browser` (requires Python Playwright and Chromium) runs a static DOM smoke test. Real WebGL pixel tests on a network-enabled browser remain a separate validation step. See `HANDOFF_v1.0.0_2026-10-08.md` for detailed limits.
