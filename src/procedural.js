@@ -4,17 +4,17 @@ export function createDemo() {
   const torus = new THREE.Mesh(new THREE.TorusKnotGeometry(1.3,.32,160,16,2,3), new THREE.MeshStandardMaterial({color:0xc4e6e2,metalness:.15,roughness:.42}));
   torus.name = 'Torus Knot · UV Test';torus.position.set(-1.55,.15,0);group.add(torus);
   // Ribbon: centerline over an arc, UV U spans the ribbon length and V the width.
-  const segments=100, positions=[],uv=[],indices=[];
+  const segments=100, positions=[],uv=[],vertexRGBA=[],indices=[];
   for(let i=0;i<=segments;i++){
     const t=i/segments;const a=t*Math.PI*1.4;const center=new THREE.Vector3(Math.cos(a)*1.25,Math.sin(a)*.45+Math.sin(t*8)*.2,Math.sin(a)*.9);
     const width=.34+Math.sin(t*Math.PI)*.1;
     for(let j=0;j<2;j++){
       const s=j===0?-1:1;
-      positions.push(center.x,center.y+s*width,center.z);uv.push(t*3,j);
+      positions.push(center.x,center.y+s*width,center.z);uv.push(t*3,j);vertexRGBA.push(1,1,1,Math.min(1,Math.max(0,t)));
     }
   }
   for(let i=0;i<segments;i++){const a=i*2;indices.push(a,a+1,a+2,a+1,a+3,a+2)}
-  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.setIndex(indices);geometry.computeVertexNormals();
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.setAttribute('color',new THREE.Float32BufferAttribute(vertexRGBA,4));geometry.setIndex(indices);geometry.computeVertexNormals();
   const ribbon=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:0x80cbdc,side:THREE.DoubleSide,metalness:.05,roughness:.58}));ribbon.name='VFX Ribbon · UV Flow';ribbon.position.set(1.55,.1,0);group.add(ribbon);
   return group;
 }

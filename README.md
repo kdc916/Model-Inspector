@@ -2,7 +2,7 @@
 
 > 3D Asset Workbench — 브라우저에서 모델 구조, UV, 노멀, PBR 텍스처, UV Flow를 검수하는 도구.
 >
-> **Version:** 0.2.0 (2026-10-08) · Three.js `0.186.0` 고정 · 별도 백엔드 불필요
+> **Version:** 0.3.0 (2026-10-08) · Three.js `0.186.0` 고정 · 별도 백엔드 불필요
 
 ## 주요 기능
 
@@ -12,7 +12,7 @@
 - **디버그 뷰:** Material, UV Checker, UV Grid, Normal Color, **UV Stretch Heatmap**, **Vertex RGBA (RGB/R/G/B/A)**, Wireframe, Vertex Normal/Tangent Vector, Double-sided
 - **2D UV:** UV 채널 UV0~UV3 선택, 선택 메시/전체 메시 UV 와이어 레이아웃, PNG 내보내기, UV 범위/타일링 확인
 - **UV Flow:** 방향/오라/폭포/열기 프리셋, X/Y 시각적 이동 속도, 수동 이동, U/V 반복, 재생/일시정지/초기화. +값은 **보이는 텍스처가 해당 방향으로 이동**하도록 오프셋 부호 처리
-- **PBR 업로드:** Base Color, Normal, Roughness, Metallic, Emissive, Opacity. PNG/JPG/WebP/TGA/DDS 등. 전체 또는 선택 메시 적용
+- **PBR 업로드:** Base Color, Normal, Roughness, Metallic, Emissive, Opacity, AO, Bump, Height/Displacement. PNG/JPG/WebP/TGA/DDS 등. 전체 또는 선택 메시 적용
 - **애니메이션:** GLB/glTF/FBX 등에 들어 있는 지원 AnimationClip 선택 및 Play/Pause
 - **반응형:** 데스크톱 3패널 작업 UI, 모바일 스택 레이아웃
 
@@ -150,3 +150,33 @@ MIT License.
 - 라이브 파일 교체 시 GPU 디버그 지오메트리 정리, 13개 단위 테스트
 
 > GitHub Pages는 기존 설정 `main / (root)`를 유지하고, `src/mesh-diagnostics.js` 파일도 함께 업로드해야 합니다.
+
+## v0.3.0 (2026-10-08) · Wireframe / Vertex Alpha / Material Lab
+
+**Online:** https://kdc916.github.io/Model-Inspector/ · **Repository:** https://github.com/kdc916/Model-Inspector
+
+### 화면에서 사용할 위치
+
+1. 모델을 불러온 후 뷰포트 상단 **Wire** 버튼을 누르면 재질 위로 Wireframe Overlay가 표시됩니다. Inspector에서 Wire opacity / Wire color / X-Ray를 조절합니다. 선은 18만 삼각형 이하 메시의 원본 topology를 참조하며 표면/뒷면을 확인할 수 있습니다. Deform된 SkinnedMesh의 와이어 경계는 현재 원본 바인드 형상을 반영할 수 있습니다.
+2. 뷰포트 상단 **Vertex Alpha**를 누르면 RGBA의 A 채널을 흑백으로 확인합니다. **검정 0 = 투명 / 흰색 1 = 불투명**. Inspector의 Vertex Alpha 통계에서 min/max/avg와 transparent/partial/opaque 샘플 수, 채널이 없는 RGB-only 메시를 구분합니다. 데모의 VFX Ribbon에는 검사용 RGBA가 저장되어 있습니다.
+3. 우측 **Material** 탭의 Apply to (All meshes / Selected mesh only) 선택 후 텍스처 슬롯을 클릭하여 파일을 올립니다. 슬롯의 × 버튼으로 선택 범위의 텍스처를 제거할 수 있습니다. UI 슬롯 표시명은 마지막 편집 상태이며 일부 선택만 편집한 경우 메시별 상태를 완전히 표현하지 않습니다.
+4. 우측 슬라이더로 **Base Color Intensity / Roughness factor / Metallic factor / Normal Strength / AO Intensity / Emissive Intensity + Tint / Bump Scale / Displacement Scale + Bias / Opacity / Alpha Clip threshold**를 조절합니다. **Transparency mode**는 Opaque / Alpha Blend / Alpha Clip입니다.
+5. 모든 텍스처의 UV Flow는 기존 **UV & Flow** 탭에서 계속 사용할 수 있습니다. 오프셋과 Repeat은 편집용 재질의 텍스처에만 반영되고 원본에는 영향을 주지 않습니다.
+
+### 텍스처 매핑 규칙 및 제약
+
+| Slot | Internal material property | 주의사항 |
+|---|---|---|
+| Base Color | `map` | sRGB · Material color/intensity와 곱해짐. RGBA A를 사용하려면 Blend/Clip |
+| Normal | `normalMap` | Linear, strength는 normalScale. 음수로 X/Y 축 동시 반전 |
+| Roughness | `roughnessMap` | Linear · **G 채널**, roughness factor와 곱해짐 |
+| Metallic | `metalnessMap` | Linear · **B 채널**, metallic factor와 곱해짐 |
+| Emissive | `emissiveMap` | sRGB · emissive color 및 emissive intensity |
+| Opacity | `alphaMap` | Linear · **G 채널**, alpha mode/opacity를 지정 |
+| Ambient Occlusion | `aoMap` | Linear · **R 채널**, UV 채널 유무 확인. AO intensity |
+| Bump | `bumpMap` | Linear · Bump Scale (Normal Map 사용 시 Normal 우선) |
+| Height / Displacement | `displacementMap` | Linear · 실제 정점을 이동. 메시 subdivision 없이 실루엣 세부 묘사 증가 불가 |
+
+**파일 호환성:** PNG/JPG/WebP/BMP/AVIF/GIF/TGA/DDS는 브라우저·Three.js 디코더 지원 범위 안에서 사용할 수 있습니다. PBR 텍스처 전용 HDR/EXR/KTX2 디코더 및 채널 분리 ORM 패킹은 v0.3.0에 포함되지 않습니다.
+
+**브라우저 미검증 범위:** 이 실행 환경에서는 라이브 Three.js CDN 접근/실제 WebGL 모델 렌더링 테스트를 완료하지 못했습니다. 테스트 `npm test`와 정적 JS 문법 검사는 통과했지만, 배포 브라우저에서 파일별 로딩·셰이더 동작을 추가 확인해야 합니다.

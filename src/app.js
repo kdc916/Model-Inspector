@@ -8,7 +8,8 @@ import { LocalModelLoader } from './model-loaders.js';
 import { createDemo, makeCheckerTexture } from './procedural.js';
 import { drawUVLayout, inspectMeshes } from './analysis.js';
 import { finite, modelStats, textureOffsetFromVisual, triangleCount } from './uv-utils.js';
-import { analyzeUVStretch, extractVertexColors } from './mesh-diagnostics.js';
+import { analyzeUVStretch, extractVertexColors, analyzeVertexAlpha } from './mesh-diagnostics.js';
+import { TEXTURE_SLOTS, materialValue, alphaMaterialSettings } from './material-controls.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -25,10 +26,10 @@ const state = {
   uvPlaying:false, flowPhaseX:0, flowPhaseY:0, visualOffsetX:0, visualOffsetY:0,
   offsetsDirty:true, editableTextures:new WeakSet(), uploadedURLs:[],
   spin:false, fps:60, lastFpsUpdate:0, frameCount:0,
-  pointerDown:null, dragCount:0
+  pointerDown:null, dragCount:0, loadGeneration:0, slotFiles:new Map()
 };
-const slotNames=['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'];
-const textureMapSlots=['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap','aoMap','bumpMap','displacementMap'];
+const slotNames=TEXTURE_SLOTS;
+const textureMapSlots=TEXTURE_SLOTS;
 const viewport = $('#viewport');
 const renderer = new THREE.WebGLRenderer({antialias:true,alpha:false,preserveDrawingBuffer:true,powerPreference:'high-performance'});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1,2));
@@ -86,7 +87,7 @@ function restorePreviewGeometry(mesh){
 }
 function ensurePreviewGeometry(mesh){
   const key=state.mode==='stretch'?`stretch:${state.uvChannel}`:
-    state.mode==='vertex'?`vertex:${$('#vertexChannel').value}`:null;
+    state.mode==='vertex'?`vertex:${$('#vertexChannel').value}`:state.mode==='alpha'?'vertex:a':null;
   const existing=state.previewGeos.get(mesh);
   if(existing?.key===key)return;
   restorePreviewGeometry(mesh);
@@ -100,7 +101,7 @@ function ensurePreviewGeometry(mesh){
     mesh.geometry=geo;state.previewGeos.set(mesh,{key,geometry:geo});
   }else{
     const geo=source.clone();
-    const colors=extractVertexColors(source,$('#vertexChannel').value);
+    const colors=extractVertexColors(source,state.mode==='alpha'?'a':$('#vertexChannel').value);
     if(!colors){geo.dispose();return;}
     geo.setAttribute('color',new THREE.BufferAttribute(colors,3));
     mesh.geometry=geo;state.previewGeos.set(mesh,{key,geometry:geo});
@@ -121,9 +122,9 @@ function updateDisplayMaterial(){
     } else if(state.mode==='normal'){
       if(!cache.normal) cache.normal=new THREE.MeshNormalMaterial({side:THREE.DoubleSide});
       assignDebugMaterial(mesh,cache.normal);
-    } else if(state.mode==='stretch'||state.mode==='vertex'){
-      const key=state.mode;
-      if(!cache[key])cache[key]=new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide,color:0xffffff});
+    } else if(state.mode==='stretch'||state.mode==='vertex'||state.mode==='alpha'){
+      const key=state.mode==='alpha'?'vertex':state.mode;
+      if(!cache[key])cache[key]=new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide,color:0xffffff,toneMapped:false});
       // A missing attribute is treated as neutral gray in the preview.
       if(!state.previewGeos.has(mesh)){
         if(!cache.neutral)cache.neutral=new THREE.MeshBasicMaterial({color:0x59616c,side:THREE.DoubleSide});
@@ -142,14 +143,16 @@ function updateDisplayMaterial(){
     state.debugMats.set(mesh,cache);
   }
   state.offsetsDirty=true;
-  $('#viewModeHud').textContent={material:'PBR / MATERIAL',checker:'UV / CHECKER',uvgrid:'UV / GRID',normal:'GEOMETRY / NORMALS',stretch:'UV / STRETCH HEATMAP',vertex:'VERTEX / COLOR'}[state.mode];
+  $('#viewModeHud').textContent={material:'PBR / MATERIAL',checker:'UV / CHECKER',uvgrid:'UV / GRID',normal:'GEOMETRY / NORMALS',stretch:'UV / STRETCH HEATMAP',vertex:'VERTEX / COLOR',alpha:'VERTEX / ALPHA'}[state.mode];
   $$('.tool[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.mode));
   $('#diagnosticLegend').hidden=state.mode!=='stretch';
   $('#vertexOptions').hidden=state.mode!=='vertex';
+  $('#alphaLegend').hidden=state.mode!=='alpha';
   applyTextureParameters();
 }
 function setMode(mode){state.mode=mode;updateDisplayMaterial();}
 function disposeModel(){
+  state.loadGeneration++;
   state.uvPlaying=false;state.animationPlaying=false;state.sceneMixer?.stopAllAction();state.sceneMixer=null;
   $('#btnUVPlay').textContent='▶ UV Flow Play';$('#btnAnimToggle').textContent='▶ Play';
   if(state.normalHelper){state.normalHelper.parent?.remove(state.normalHelper);state.normalHelper.dispose?.();state.normalHelper=null;}
@@ -190,7 +193,8 @@ function disposeModel(){
   }
   state.localLoader.dispose();
   for(const u of state.uploadedURLs)URL.revokeObjectURL(u);
-  state.uploadedURLs=[];state.editableTextures=new WeakSet();
+  state.uploadedURLs=[];state.editableTextures=new WeakSet();state.slotFiles.clear();
+  $$('.texture-slot').forEach(el=>{el.classList.remove('loaded');el.querySelector('small').textContent='Upload image';});
   state.model=null;state.meshes=[];state.selected=null;state.clips=[];
 }
 function installModel(root,meta={},clips=[]){
@@ -211,6 +215,7 @@ function installModel(root,meta={},clips=[]){
   $('#assetTitle').textContent=(meta.name||root.name||'MODEL').slice(0,42).toUpperCase();
   $('#assetMeta').textContent=`${meta.format||'DEMO'} · ${state.meshes.length} meshes`;
   state.mode='material';updateDisplayMaterial();
+  updateVertexAlphaHealth();
   updateStats();updateHierarchy();updateInspector();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);
   status(`${meta.name||'데모 모델'} 준비 완료 · ${fmt(modelStats(state.meshes).triangles)} triangles`);
 }
@@ -257,7 +262,7 @@ function updateHierarchy(){
 }
 function compact(n){return n>=1000000?(n/1000000).toFixed(1)+'m':n>=1000?(n/1000).toFixed(1)+'k':String(n);}
 function selectMesh(mesh){
-  state.selected=mesh||null;updateHierarchy();updateInspector();updateNormalHelper();updateTangentHelper();
+  state.selected=mesh||null;updateHierarchy();updateInspector();updateVertexAlphaHealth();updateNormalHelper();updateTangentHelper();
   if($('#applyScope').value==='selected'&&!state.selected)$('#applyScope').value='all';
 }
 function inspected(){return state.selected?[state.selected]:state.meshes;}
@@ -275,6 +280,7 @@ function updateInspector(){
     ['Dimensions',dims?[dims.x,dims.y,dims.z].map(v=>v.toFixed(3)).join(' × '):'—'],
     ['Materials',selected?(Array.isArray(state.originalMats.get(selected))?state.originalMats.get(selected).length:1):[...new Set(meshes.flatMap(m=>{const a=state.originalMats.get(m);return Array.isArray(a)?a:[a];}))].length],
     ['Vertex color',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('color')).length}/${meshes.length} meshes`],
+    ['Vertex Alpha (RGBA)',`${meshes.filter(m=>(state.originalGeos.get(m)||m.geometry).getAttribute('color')?.itemSize>=4).length}/${meshes.length} meshes`],
     ['Tangents',`${meshes.filter(m=>state.originalGeos.get(m)?.hasAttribute('tangent')).length}/${meshes.length} meshes`]
   ];
   const props=$('#inspectProperties');props.replaceChildren();
@@ -311,6 +317,21 @@ function updateInspector(){
   const result=drawUVLayout($('#uvCanvas'),meshes,state.uvChannel);
   $('#uvStatus').textContent=`UV${state.uvChannel}`+(result?.skippedFaces?' · simplified':'');
 }
+function updateVertexAlphaHealth(){
+  const meshes=inspected();
+  const reports=meshes.map(m=>analyzeVertexAlpha(state.originalGeos.get(m)||m.geometry));
+  const actual=reports.filter(r=>r.hasAlpha);
+  const rgb=reports.filter(r=>r.reason==='rgb-only').length;
+  const missing=reports.filter(r=>r.reason==='missing-color').length;
+  const el=$('#vertexAlphaHealth');
+  if(!actual.length){
+    el.textContent=`Vertex Alpha 없음 · RGB만 ${rgb} meshes · Vertex Color 없음 ${missing} meshes. RGBA 색상 데이터를 포함하여 내보내세요.`;
+    return;
+  }
+  let n=0,sum=0,min=1,max=0,zero=0,partial=0,opaque=0;
+  for(const r of actual){n+=r.sampled;sum+=r.average*r.sampled;min=Math.min(min,r.min);max=Math.max(max,r.max);zero+=r.zero;partial+=r.partial;opaque+=r.opaque;}
+  el.textContent=`RGBA ${actual.length}/${meshes.length} meshes · Alpha min ${min.toFixed(3)}, max ${max.toFixed(3)}, avg ${(sum/Math.max(n,1)).toFixed(3)} · transparent ${fmt(zero)}, partial ${fmt(partial)}, opaque ${fmt(opaque)} (sampled vertices ${fmt(n)})${rgb||missing?` · RGB only ${rgb} / no color ${missing}`:''}`;
+}
 function updateAnimSelect(){
   const sel=$('#animationSelect');sel.replaceChildren();
   if(!state.clips.length){const option=new Option('No animation','');sel.add(option);sel.disabled=true;$('#btnAnimToggle').disabled=true;return;}
@@ -333,14 +354,19 @@ function disposeWireHelpers(){
   state.wireHelpers=[];
 }
 function updateWireframe(){
-  disposeWireHelpers();if(!$('#toggleWire').checked)return;
+  disposeWireHelpers();$('#btnWire').classList.toggle('active',$('#toggleWire').checked);if(!$('#toggleWire').checked)return;
   for(const mesh of state.meshes){
-    if(triangleCount(mesh.geometry)>180000){status('폴리곤이 많은 메시의 Wireframe은 성능 보호를 위해 생략했습니다.');continue;}
-    const geo=new THREE.WireframeGeometry(mesh.geometry);
-    const mat=new THREE.LineBasicMaterial({color:0x8ce2df,transparent:true,opacity:.32,depthTest:true});
-    const helper=new THREE.LineSegments(geo,mat);helper.name='Wireframe Overlay';helper.frustumCulled=false;helper.raycast=()=>{};
+    if(triangleCount(state.originalGeos.get(mesh)||mesh.geometry)>180000){status('Wireframe: 180k triangle 초과 메시 생략 (성능 보호).');continue;}
+    const geo=new THREE.WireframeGeometry(state.originalGeos.get(mesh)||mesh.geometry);
+    const mat=new THREE.LineBasicMaterial({color:$('#wireColor').value,transparent:true,opacity:finite($('#wireOpacity').value,.9),depthTest:!$('#wireXray').checked,depthWrite:false});
+    const helper=new THREE.LineSegments(geo,mat);helper.name='Wireframe Overlay';helper.frustumCulled=false;helper.renderOrder=900;helper.raycast=()=>{};
     mesh.add(helper);state.wireHelpers.push(helper);
   }
+}
+function updateWireStyle(){
+  const color=$('#wireColor').value,opacity=clamp(finite($('#wireOpacity').value,.9),.1,1),xray=$('#wireXray').checked;
+  $('#valueWireOpacity').textContent=opacity.toFixed(2);
+  for(const h of state.wireHelpers){h.material.color.set(color);h.material.opacity=opacity;h.material.depthTest=!xray;h.material.needsUpdate=true;}
 }
 function updateNormalHelper(){
   if(state.normalHelper){state.normalHelper.parent?.remove(state.normalHelper);state.normalHelper.dispose?.();state.normalHelper=null;}
@@ -370,8 +396,8 @@ function makeWorkingMaterials(mesh){
   }
   const editable=Array.isArray(cache.working)?cache.working:[cache.working];
   return editable.map((m,i)=>{
-    if(!('roughness' in m)){
-      const standard=new THREE.MeshStandardMaterial({color:m.color?.clone()||new THREE.Color('#ffffff'),map:m.map||null,transparent:m.transparent,side:m.side});
+    if(!m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial){
+      const standard=new THREE.MeshStandardMaterial({color:m.color?.clone()||new THREE.Color('#ffffff'),map:m.map||null,normalMap:m.normalMap||null,roughnessMap:m.roughnessMap||null,metalnessMap:m.metalnessMap||null,emissiveMap:m.emissiveMap||null,alphaMap:m.alphaMap||null,aoMap:m.aoMap||null,transparent:m.transparent,opacity:m.opacity??1,side:m.side});
       if(Array.isArray(cache.working))cache.working[i]=standard;else cache.working=standard;
       m.dispose();return standard;
     }
@@ -385,6 +411,38 @@ function uniqueTextureForMaterial(material,slot){
     material[slot]=fresh;state.editableTextures.add(fresh);
   }
   return material[slot];
+}
+/** Apply material overrides only to targets: imported materials remain immutable. */
+function applyMaterialInputs(meshes=scopeMeshes()){
+  const controls={
+    baseStrength:materialValue('baseStrength',$('#matBaseStrength').value),
+    roughness:materialValue('roughness',$('#matRough').value),
+    metalness:materialValue('metalness',$('#matMetal').value),
+    normalStrength:materialValue('normalStrength',$('#matNormalStrength').value),
+    aoMapIntensity:materialValue('aoMapIntensity',$('#matAOIntensity').value),
+    emissiveIntensity:materialValue('emissiveIntensity',$('#matEmissiveIntensity').value),
+    bumpScale:materialValue('bumpScale',$('#matBumpScale').value),
+    displacementScale:materialValue('displacementScale',$('#matDisplacementScale').value),
+    displacementBias:materialValue('displacementBias',$('#matDisplacementBias').value),
+  };
+  const settings=alphaMaterialSettings($('#matAlphaMode').value,$('#matOpacity').value,$('#matAlphaCutoff').value);
+  const tint=new THREE.Color($('#matColor').value).multiplyScalar(controls.baseStrength);
+  const emissive=new THREE.Color($('#matEmissiveColor').value);
+  for(const mesh of meshes)for(const mat of makeWorkingMaterials(mesh)){
+    mat.color.copy(tint);
+    mat.roughness=controls.roughness;mat.metalness=controls.metalness;
+    mat.normalScale.setScalar(controls.normalStrength);
+    mat.aoMapIntensity=controls.aoMapIntensity;
+    mat.emissive.copy(emissive);mat.emissiveIntensity=controls.emissiveIntensity;
+    mat.bumpScale=controls.bumpScale;
+    mat.displacementScale=controls.displacementScale;
+    mat.displacementBias=controls.displacementBias;
+    mat.transparent=settings.transparent;
+    mat.opacity=settings.opacity;mat.alphaTest=settings.alphaTest;
+    mat.depthWrite=settings.depthWrite;
+    mat.needsUpdate=true;
+  }
+  if(state.mode==='material')updateDisplayMaterial();
 }
 function applyTextureParameters(){
   const x = state.visualOffsetX, y=state.visualOffsetY;
@@ -438,10 +496,12 @@ async function applyUpload(slot,file){
   if(!file.type.startsWith('image/') && !/\.(png|jpe?g|bmp|webp|gif|avif|tga|dds)$/i.test(file.name)){
     status('지원하는 이미지 형식: PNG/JPG/WebP/BMP/AVIF/TGA/DDS',true);return;
   }
+  const generation=state.loadGeneration;
   let url=URL.createObjectURL(file);state.uploadedURLs.push(url);
   let tex;
   const uploadLoader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():new THREE.TextureLoader();
   try{tex=await uploadLoader.loadAsync(url);}catch(err){status(`텍스처 로드 실패: ${err.message}`,true);return;}
+  if(generation!==state.loadGeneration){tex.dispose();return;}
   tex.flipY=$('#flipTextureY').checked;
   tex.colorSpace=['map','emissiveMap'].includes(slot)?THREE.SRGBColorSpace:THREE.NoColorSpace;
   tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
@@ -453,7 +513,7 @@ async function applyUpload(slot,file){
       const own=tex.clone();own.needsUpdate=true;state.editableTextures.add(own);
       mat[slot]=own;
       if(previous&&state.editableTextures.has(previous))previous.dispose();
-      if(slot==='alphaMap')mat.transparent=true;
+      if(slot==='alphaMap'&&$('#matAlphaMode').value==='opaque'){$('#matAlphaMode').value='blend';$('#matAlphaCutoff').disabled=true;}
       if(slot==='emissiveMap')mat.emissive?.set('#ffffff');
       mat.needsUpdate=true;
     }
@@ -461,17 +521,34 @@ async function applyUpload(slot,file){
   tex.dispose();
   const element=$(`.texture-slot[data-slot="${slot}"]`);
   element.classList.add('loaded');element.querySelector('small').textContent=file.name;
+  state.slotFiles.set(slot,file.name);
+  applyMaterialInputs(targets);
   state.offsetsDirty=true;applyTextureParameters();setMode('material');
   status(`${file.name} → ${slot} (${targets.length} meshes) 적용`);
 }
-function applyMaterialControl(prop,value){
-  const targets=scopeMeshes();
-  for(const mesh of targets)for(const mat of makeWorkingMaterials(mesh)){
-    if(prop==='color')mat.color?.set(value);
-    else if(prop in mat)mat[prop]=value;
-    mat.needsUpdate=true;
+function clearTextureSlot(slot){
+  if(!slotNames.includes(slot))return;
+  for(const mesh of scopeMeshes()){
+    const cache=state.debugMats.get(mesh);if(!cache?.working)continue;
+    for(const mat of (Array.isArray(cache.working)?cache.working:[cache.working])){
+      const tex=mat[slot];if(tex&&state.editableTextures.has(tex))tex.dispose();
+      mat[slot]=null;mat.needsUpdate=true;
+    }
   }
+  const label=$(`.texture-slot[data-slot="${slot}"]`);
+  label.classList.remove('loaded');label.querySelector('small').textContent='Upload image';
+  state.slotFiles.delete(slot);
   if(state.mode==='material')updateDisplayMaterial();
+  status(`${slot} 텍스처 해제 완료 (선택 범위)`);
+}
+function resetMaterialUI(){
+  for(const id of ['matBaseStrength','matNormalStrength','matAOIntensity','matEmissiveIntensity','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaCutoff','matRough','matMetal']){
+    const control=$('#'+id);control.value=control.defaultValue;
+    const output=$('#'+({matRough:'valueRough',matMetal:'valueMetal',matBaseStrength:'valueBaseStrength',matNormalStrength:'valueNormalStrength',matAOIntensity:'valueAOIntensity',matEmissiveIntensity:'valueEmissiveIntensity',matBumpScale:'valueBumpScale',matDisplacementScale:'valueDisplacementScale',matDisplacementBias:'valueDisplacementBias',matOpacity:'valueOpacity',matAlphaCutoff:'valueAlphaCutoff'}[id]));
+    if(output)output.textContent=Number(control.value).toFixed(2);
+  }
+  $('#matColor').value='#ffffff';$('#matEmissiveColor').value='#ffffff';
+  $('#matAlphaMode').value='opaque';$('#matAlphaCutoff').disabled=true;
 }
 function resetMaterials(){
   for(const mesh of scopeMeshes()){
@@ -487,6 +564,7 @@ function resetMaterials(){
     if(state.mode==='material')mesh.material=state.originalMats.get(mesh);
   }
   $$('.texture-slot').forEach(el=>{el.classList.remove('loaded');el.querySelector('small').textContent='Upload image';});
+  state.slotFiles.clear();resetMaterialUI();
   state.visualOffsetX=state.visualOffsetY=0;state.flowPhaseX=state.flowPhaseY=0;
   $('#offsetX').value=0;$('#offsetY').value=0;
   state.uvPlaying=false;$('#btnUVPlay').textContent='▶ UV Flow Play';$('#flowOverlay').hidden=true;
@@ -546,6 +624,8 @@ function bindUI(){
   $('#toggleGrid').onchange=e=>grid.visible=e.target.checked;
   $('#toggleAxes').onchange=e=>axes.visible=e.target.checked;
   $('#toggleWire').onchange=updateWireframe;
+  $('#btnWire').onclick=()=>{$('#toggleWire').checked=!$('#toggleWire').checked;updateWireframe();};
+  for(const id of ['wireOpacity','wireColor','wireXray'])$('#'+id).addEventListener('input',updateWireStyle);
   $('#toggleNormals').onchange=updateNormalHelper;
   $('#toggleTangents').onchange=updateTangentHelper;
   $('#vertexChannel').onchange=()=>{if(state.mode==='vertex')updateDisplayMaterial();};
@@ -591,9 +671,18 @@ function bindUI(){
   $$('[data-texture]').forEach(el=>el.addEventListener('change',e=>{
     applyUpload(e.target.dataset.texture,e.target.files?.[0]);e.target.value='';
   }));
-  $('#matColor').oninput=e=>applyMaterialControl('color',e.target.value);
-  $('#matRough').oninput=e=>{const v=finite(e.target.value);$('#valueRough').textContent=v.toFixed(2);applyMaterialControl('roughness',v);};
-  $('#matMetal').oninput=e=>{const v=finite(e.target.value);$('#valueMetal').textContent=v.toFixed(2);applyMaterialControl('metalness',v);};
+  const matOutputs={matBaseStrength:'valueBaseStrength',matRough:'valueRough',matMetal:'valueMetal',matNormalStrength:'valueNormalStrength',matAOIntensity:'valueAOIntensity',matEmissiveIntensity:'valueEmissiveIntensity',matBumpScale:'valueBumpScale',matDisplacementScale:'valueDisplacementScale',matDisplacementBias:'valueDisplacementBias',matOpacity:'valueOpacity',matAlphaCutoff:'valueAlphaCutoff'};
+  for(const [id,out] of Object.entries(matOutputs))$('#'+id).addEventListener('input',e=>{
+    $('#'+out).textContent=Number(e.target.value).toFixed(2);applyMaterialInputs();
+  });
+  for(const id of ['matColor','matEmissiveColor'])$('#'+id).addEventListener('input',()=>applyMaterialInputs());
+  $('#matAlphaMode').addEventListener('change',()=>{$('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';applyMaterialInputs();});
+  $('#applyScope').addEventListener('change',()=>status('Apply to 범위 변경 · 이후 텍스처/수치 편집에 적용됩니다.'));
+  $$('.texture-slot').forEach(label=>{
+    const close=document.createElement('button');close.type='button';close.className='slot-clear';close.textContent='×';close.title='Remove '+label.dataset.slot;
+    close.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();clearTextureSlot(label.dataset.slot);});
+    label.appendChild(close);
+  });
   $('#btnMaterialReset').onclick=resetMaterials;
   $('#animationSelect').onchange=()=>switchClip(true);
   $('#btnAnimToggle').onclick=()=>{

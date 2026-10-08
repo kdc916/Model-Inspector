@@ -10,3 +10,15 @@
 .heat-gradient{width:170px;height:9px;border-radius:6px;background:linear-gradient(90deg,#2b87fa,#2bd18f,#ff452b);margin:3px 0}
 .diagnostic-result{font-size:11px;color:#a3b8c4;line-height:1.5;padding:10px 9px;background:rgba(43,58,74,.36);border-radius:7px;margin-top:8px}
 @media(max-width:600px){.heat-legend{right:8px;bottom:30px;padding:8px}.heat-gradient{width:135px}.viewer-toolbar .tool-group{flex-wrap:wrap}}
+
+/* v0.3.0 material lab / viewport overlays */
+#alphaLegend[hidden]{display:none!important}
+.alpha-legend{position:absolute;right:16px;bottom:42px;z-index:6;background:rgba(14,20,27,.88);border:1px solid rgba(170,197,219,.24);border-radius:10px;padding:11px 13px;color:#d4e4eb;display:flex;flex-direction:column;gap:5px;font-size:11px;pointer-events:none}
+.alpha-gradient{width:170px;height:11px;border:1px solid #8e9dab;border-radius:5px;background:linear-gradient(90deg,#000,#fff)}
+.wire-xray{padding-top:24px;white-space:normal}
+.texture-slot{position:relative;min-width:0}
+.slot-clear{position:absolute;top:3px;right:4px;font-size:17px;line-height:20px;text-align:center;background:#111b23b3;border:1px solid #506674;color:#cbd6dc;width:24px;height:24px;border-radius:6px;opacity:.65;z-index:1}
+.slot-clear:hover,.texture-slot.loaded .slot-clear{opacity:1}
+#page-material .section-title.separated{margin-top:24px}
+#page-material .note{margin:15px 0;line-height:1.65}
+@media(max-width:600px){.alpha-legend{right:8px;bottom:30px;padding:8px}.alpha-gradient{width:135px}}

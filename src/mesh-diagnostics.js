@@ -74,6 +74,7 @@ export function extractVertexColors(geometry, channel='rgb') {
   const position=geometry?.getAttribute('position');
   if(!position)return null;
   const color=geometry.getAttribute('color');
+  if(!color)return null;
   const result=new Float32Array(position.count*3);
   for(let i=0;i<position.count;i++) {
     const r=color&&i<color.count?color.getX(i):0.35;
@@ -85,4 +86,26 @@ export function extractVertexColors(geometry, channel='rgb') {
     else {const v=clamp(selected??0.35,0,1);result.set([v,v,v],i*3);}
   }
   return result;
+}
+
+/** Vertex Alpha summary detects actual 4-component vertex colors (RGB alone is not RGBA). */
+export function analyzeVertexAlpha(geometry) {
+  const position=geometry?.getAttribute('position');
+  const color=geometry?.getAttribute('color');
+  const vertices=position?.count||0;
+  const common={vertices, hasColors:!!color, hasAlpha:!!color&&color.itemSize>=4, sampled:0,
+    min:null,max:null,average:null,zero:0,partial:0,opaque:0,reason:null};
+  if(!vertices)return {...common,reason:'no-vertices'};
+  if(!color)return {...common,reason:'missing-color'};
+  if(color.itemSize<4)return {...common,reason:'rgb-only'};
+  // All vertex alphas, deterministic with bounded iteration on extremely dense geometry.
+  const stride=Math.max(1,Math.ceil(Math.min(vertices,color.count)/250000));
+  let min=1,max=0,sum=0,zero=0,partial=0,opaque=0,sampled=0;
+  for(let i=0;i<Math.min(vertices,color.count);i+=stride){
+    const a=clamp(Number.isFinite(color.getW(i))?color.getW(i):1,0,1);
+    min=Math.min(min,a);max=Math.max(max,a);sum+=a;sampled++;
+    if(a<=0.001)zero++;else if(a>=0.999)opaque++;else partial++;
+  }
+  return {...common,sampled,min:sampled?min:null,max:sampled?max:null,
+    average:sampled?sum/sampled:null,zero,partial,opaque,reason:null};
 }
