@@ -56,3 +56,23 @@ test('tampered texture byte size is rejected',async()=>{
  z.file('manifest.json',JSON.stringify(manifest));z.file('assets/material/map.png','ABCD');MockZip.current=z;
  await assert.rejects(()=>loadPack(new File(['zipbytes'],'test.zip'),MockZip),/크기가 일치/);
 });
+test('ZIP loader checks central-directory budget before CRC expansion',async()=>{
+ const z=new MockZip();z.file('manifest.json',JSON.stringify(createPackManifest(sample).manifest));
+ const checks=[];
+ class CRCZip {static async loadAsync(bytes,opts){checks.push(opts.checkCRC32);return z;}}
+ const result=await loadPack(new File(['zipbytes'],'pack.zip'),CRCZip);
+ assert.equal(result.files.length,0);assert.deepEqual(checks,[false,true]);
+});
+test('ZIP CRC failure rejects whole import after size validation',async()=>{
+ const z=new MockZip();z.file('manifest.json',JSON.stringify(createPackManifest(sample).manifest));
+ class CorruptZip {static async loadAsync(bytes,opts){if(opts.checkCRC32)throw Error('Corrupted zip: CRC32 mismatch');return z;}}
+ await assert.rejects(loadPack(new File(['badbytes'],'broken.zip'),CorruptZip),/CRC32/);
+});
+test('over-expanded ZIP is rejected before CRC decompression',async()=>{
+ const z=new MockZip();z.file('manifest.json',JSON.stringify(createPackManifest(sample).manifest));
+ z.files['manifest.json']._data.uncompressedSize=512*1024+1;
+ let checkedCRC=false;
+ class DangerousZip {static async loadAsync(bytes,opts){if(opts.checkCRC32)checkedCRC=true;return z;}}
+ await assert.rejects(loadPack(new File(['zipbytes'],'big.zip'),DangerousZip),/메타데이터/);
+ assert.equal(checkedCRC,false);
+});

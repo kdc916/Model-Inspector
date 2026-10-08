@@ -1,3 +1,28 @@
+# maxVFX Model Inspector v1.0.1 — Stability Update (2026-10-08)
+
+**GitHub Pages**: https://kdc916.github.io/Model-Inspector/  
+**Repository**: https://github.com/kdc916/Model-Inspector
+
+This version focuses on **reliability without changing the established visual settings**. The previously confirmed FBX Vertex Alpha recovery, Material/Checker alpha compositing, UV Flow, Shader Studio, pivot and texturing controls remain intact.
+
+### v1.0.1 corrections
+
+- **Rapid model switching:** async model imports use independently owned loaders and request tickets. A slow, superseded import is discarded, and its unmounted geometry/material/texture resources and Blob URLs are released.
+- **Comparison model switching:** loading another B or replacing A invalidates pending B results; clearing B while loading prevents it from reappearing.
+- **Per-slot texture upload races:** most recent upload wins for that slot; a slow upload cannot overwrite a newer file or a manually cleared slot. ORM jobs are cancelled as a unit if a newer operation touches a packed slot.
+- **Recording cleanup:** MediaRecorder encoder errors and 160 MB overrun cancel downloads, clear chunks and stop all capture tracks. Cancel/stop remains safe.
+- **Portable ZIP integrity:** central-directory expanded-size checks before JSZip CRC32 verification added; changing the primary model during package import aborts the operation. Import failures explicitly indicate partial results rather than reporting a full success.
+- **Comparison cleanup refactor:** resource disposal uses the same deduplicated detached-scene helper as cancelled imports.
+- **Smoke checks:** the browser smoke script checks both desktop and mobile UI markup with CSS and rejects duplicate element IDs. This is **not** WebGL pixel verification.
+
+### Validation notes
+
+`npm test`, `npm run test:browser` and `node --check` on JavaScript modules are the automated release checks. The separately supplied sample `Fx_Mesh_Circle01_AlphaSide.FBX` was also parsed locally with the FBX color-layer parser: 756 RGBA entries, alpha minimum 0, maximum 1. **The sample FBX is not included in the public GitHub repository or distribution ZIP.**
+
+**Remaining limitation:** This environment cannot resolve Three.js CDN; true WebGL pixel comparison (Vertex Alpha, shader blend, depth fade), interactive model import and live WebM encoding on Chrome/Edge must be tested in a browser with working network/GPU. Passing unit and DOM tests does not imply all rendering combinations have been validated.
+
+---
+
 ## v0.9.5 · Mesh / UV Diagnostics Pro + Shader Preview Presets (2026-10-08)
 
 ### UV / Mesh Diagnostics Pro

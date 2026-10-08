@@ -46,15 +46,29 @@ export function validatePackManifest(raw) {
 }
 export async function loadPack(zipFile,JSZip){
   if(!zipFile||zipFile.size>MAX_PACK_BYTES||zipFile.size<8)throw Error('ZIP 파일은 최대 160MB까지 지원합니다.');
-  const zip=await JSZip.loadAsync(await zipFile.arrayBuffer(),{checkCRC32:false,createFolders:false});
+  // First inspect the central directory WITHOUT inflating payloads (ZIP bomb defense).
+  const bytes=await zipFile.arrayBuffer();
+  let zip=await JSZip.loadAsync(bytes,{checkCRC32:false,createFolders:false});
   const entries=Object.values(zip.files).filter(f=>!f.dir);
   if(entries.length>MAX_PACK_IMAGES+1)throw Error('ZIP 내부 파일 수가 허용 범위를 넘습니다.');
+  let totalExpanded=0;
+  for(const entry of entries){
+    const size=entry._data?.uncompressedSize;
+    if(!Number.isSafeInteger(size)||size<0)throw Error('ZIP 내부 크기 정보를 확인할 수 없습니다.');
+    totalExpanded+=size;
+    if(totalExpanded>MAX_PACK_BYTES+512*1024)throw Error('ZIP 압축 해제 예상 크기가 160MB를 초과합니다.');
+    if(entry.name==='manifest.json'&&size>512*1024)throw Error('프리셋 메타데이터가 너무 큽니다.');
+    if(entry.name!=='manifest.json'&&size>MAX_IMAGE_BYTES)throw Error('32MB를 초과하는 텍스처가 있습니다.');
+  }
   if(!zip.file('manifest.json'))throw Error('manifest.json이 없습니다.');
   const raw=await zip.file('manifest.json').async('string');
   if(raw.length>512*1024)throw Error('프리셋 메타데이터가 너무 큽니다.');
   let manifest;try{manifest=validatePackManifest(JSON.parse(raw));}catch(e){throw Error(`프리셋 검증 실패: ${e.message}`);}
   const expected=new Set(['manifest.json',...manifest.images.map(i=>i.path)]);
   for(const entry of entries)if(!expected.has(entry.name))throw Error('목록에 없는 ZIP 항목이 있습니다.');
+  // Only after the manifest and total expanded-byte limits are trusted, validate all CRC32 values.
+  // JSZip's checkCRC32 pass inflates content; performing it earlier could allocate ZIP bombs.
+  zip=await JSZip.loadAsync(bytes,{checkCRC32:true,createFolders:false});
   const files=[];
   for(const item of manifest.images){
     const entry=zip.file(item.path);

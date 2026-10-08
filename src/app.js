@@ -28,6 +28,7 @@ import { SceneGuides, formatPivotReadout } from './scene-guides.js';
 import { resolvePreviewBlend, applyPreviewBlend } from './render-state.js';
 import { SHADER_FIELD_DEFAULTS, normalizeShaderStudio, installShaderStudio, updateShaderStudio } from './shader-studio.js';
 import { DepthPreview } from './depth-preview.js';
+import { RequestEpoch,SlotEpochs,disposeDetachedRoot } from './lifecycle.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -48,6 +49,9 @@ const state = {
   slotFlows:new Map(), textureTransforms:new Map(), flowSeconds:0, flipbookSeconds:0, textureKTX2:null,
   compareLoader:null, compareRoot:null, compareMeta:null, compareBasePosition:null, compareMaterialStates:new Map(), shaderMaps:{noise:null,mask:null},shaderSeconds:0,shaderUploadSerial:{noise:0,mask:0}
 };
+const modelRequests=new RequestEpoch();
+const comparisonRequests=new RequestEpoch();
+const textureRequests=new SlotEpochs();
 const slotNames=TEXTURE_SLOTS;
 const textureMapSlots=TEXTURE_SLOTS;
 const viewport = $('#viewport');
@@ -397,9 +401,11 @@ function updateDisplayMaterial(){
 }
 function setMode(mode){state.mode=mode;updateDisplayMaterial();}
 function disposeModel(){
+  comparisonRequests.invalidate(); // An in-flight B import belongs to the old A model.
   capture.cancel();
   cancelDiagnostics(true);latestDiagnostic=null;$('#btnDiagExport').disabled=true;
   state.loadGeneration++;
+  textureRequests.invalidateAll();
   state.uvPlaying=false;state.animationPlaying=false;state.sceneMixer?.stopAllAction();state.sceneMixer=null;
   $('#btnUVPlay').textContent='▶ UV Flow Play';$('#btnAnimToggle').textContent='▶ Play';
   if(state.normalHelper){state.normalHelper.parent?.remove(state.normalHelper);state.normalHelper.dispose?.();state.normalHelper=null;}
@@ -811,12 +817,13 @@ async function applyUpload(slot,file){
     status('지원하는 이미지 형식: PNG/JPG/WebP/BMP/AVIF/TGA/DDS/KTX2',true);return false;
   }
   const generation=state.loadGeneration;
+  const ticket=textureRequests.next(slot);
   let url=URL.createObjectURL(file);state.uploadedURLs.push(url);
   let tex;
   const uploadLoader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():
     /\.ktx2$/i.test(file.name)?getTextureKTX2Loader():new THREE.TextureLoader();
   try{tex=await uploadLoader.loadAsync(url);}catch(err){status(`텍스처 로드 실패: ${err.message}`,true);return false;}finally{URL.revokeObjectURL(url);state.uploadedURLs=state.uploadedURLs.filter(u=>u!==url);}
-  if(generation!==state.loadGeneration){tex.dispose();return false;}
+  if(generation!==state.loadGeneration||!textureRequests.isCurrent(slot,ticket)){tex.dispose();return false;}
   if(!/\.ktx2$/i.test(file.name))tex.flipY=$('#flipTextureY').checked;
   tex.colorSpace=['map','emissiveMap'].includes(slot)?THREE.SRGBColorSpace:THREE.NoColorSpace;
   tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
@@ -848,12 +855,13 @@ async function uploadORM(file){
     status('ORM 입력 형식이 지원되지 않습니다.',true);return;
   }
   const generation=state.loadGeneration;
+  const ormTickets=Object.fromEntries(ORM_SLOTS.map(slot=>[slot,textureRequests.next(slot)]));
   const url=URL.createObjectURL(file);state.uploadedURLs.push(url);
   const loader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():
     /\.ktx2$/i.test(file.name)?getTextureKTX2Loader():new THREE.TextureLoader();
   let source;
   try{source=await loader.loadAsync(url);}catch(e){status('ORM 로딩 실패: '+e.message,true);return;}finally{URL.revokeObjectURL(url);state.uploadedURLs=state.uploadedURLs.filter(u=>u!==url);}
-  if(generation!==state.loadGeneration){source.dispose();return;}
+  if(generation!==state.loadGeneration||ORM_SLOTS.some(slot=>!textureRequests.isCurrent(slot,ormTickets[slot]))){source.dispose();return;}
   source.colorSpace=THREE.NoColorSpace;if(!/\.ktx2$/i.test(file.name))source.flipY=$('#flipTextureY').checked;
   source.wrapS=source.wrapT=THREE.RepeatWrapping;
   const targets=scopeMeshes();
@@ -876,6 +884,7 @@ async function uploadORM(file){
 }
 function clearTextureSlot(slot){
   if(!slotNames.includes(slot))return;
+  textureRequests.invalidate(slot);
   for(const mesh of scopeMeshes()){
     const cache=state.debugMats.get(mesh);if(!cache?.working)continue;
     for(const mat of scopedMaterials(mesh)){
@@ -900,6 +909,7 @@ function resetMaterialUI(){
   $('#matDepthTest').checked=$('#matDepthWrite').checked=true;$('#matCull').value='double';$('#matMaskChannel').value='g';$('#matMaskInvert').checked=false;
 }
 function resetMaterials(){
+  textureRequests.invalidateAll();
   for(const mesh of scopeMeshes()){
     const cache=state.debugMats.get(mesh);
     if(cache?.working){
@@ -939,15 +949,12 @@ function updateDiagnostics(){
   return data;
 }
 function disposeComparison(){
+  comparisonRequests.invalidate();
   depthPreview.setReferenceRoot(null);
   state.compareMaterialStates.clear();state.compareBasePosition=null;
-  depthPreview.setReferenceRoot(null);
-  if(state.compareRoot){scene.remove(state.compareRoot);
-    const geometries=new Set(),mats=new Set(),textures=new Set();
-    state.compareRoot.traverse(o=>{if(o.geometry)geometries.add(o.geometry);
-      for(const m of (o.material?Array.isArray(o.material)?o.material:[o.material]:[])){mats.add(m);for(const slot of textureMapSlots)if(m[slot])textures.add(m[slot]);}
-    });
-    for(const g of geometries)g.dispose();for(const m of mats)m.dispose();for(const t of textures)t.dispose();
+  if(state.compareRoot){
+    scene.remove(state.compareRoot);
+    disposeDetachedRoot(state.compareRoot,textureMapSlots);
   }
   state.compareLoader?.dispose();state.compareRoot=null;state.compareLoader=null;state.compareMeta=null;
   $('#comparisonResults').textContent='비교 모델을 불러오면 폴리곤·UV·알파 차이를 표시합니다.';
@@ -984,10 +991,15 @@ function applyCompareView(){
 }
 async function openComparison(files){
   if(!files.length||!state.model)return;
+  const ticket=comparisonRequests.next(),originalPrimary=state.model;
   const loader=new LocalModelLoader(renderer);
+  let accepted=false,result=null;
   try{
-    status('비교 모델 로딩 중...');const result=await loader.load(files);
-    disposeComparison();state.compareRoot=result.root;state.compareLoader=loader;state.compareMeta=result;state.compareBasePosition=result.root.position.clone();depthPreview.setReferenceRoot(result.root);updateShaderStudioUI({rebuild:false});
+    status('비교 모델 로딩 중...');result=await loader.load(files);
+    if(!comparisonRequests.isCurrent(ticket)||state.model!==originalPrimary)return;
+    disposeComparison();state.compareRoot=result.root;state.compareLoader=loader;accepted=true;
+    state.compareMeta=result;state.compareBasePosition=result.root.position.clone();
+    depthPreview.setReferenceRoot(result.root);updateShaderStudioUI({rebuild:false});
     const primaryBox=new THREE.Box3().setFromObject(state.model);
     const secondaryBox=new THREE.Box3().setFromObject(result.root);
     if(!primaryBox.isEmpty()&&!secondaryBox.isEmpty()){
@@ -995,35 +1007,45 @@ async function openComparison(files){
       result.root.position.x+=primaryBox.max.x-secondaryBox.min.x+gap;
     }
     state.compareBasePosition=result.root.position.clone();
-    scene.add(result.root);result.root.updateMatrixWorld(true);$('#compareDisplayMode').value='side';$('#compareVisible').checked=true;$('#compareOpacity').value='1';applyCompareView();
+    scene.add(result.root);result.root.updateMatrixWorld(true);
+    $('#compareDisplayMode').value='side';$('#compareVisible').checked=true;$('#compareOpacity').value='1';applyCompareView();
     const c=buildComparison(state.model,result.root,state.uvChannel),d=c.comparison.delta;
     $('#comparisonResults').textContent=`A ${c.left.name} vs B ${c.right.name}\n`+
       Object.entries(d).map(([k,v])=>`${k}: ${v.left.toLocaleString()} → ${v.right.toLocaleString()} (${v.diff>=0?'+':''}${v.diff.toLocaleString()})`).join('\n');
     const box=new THREE.Box3().setFromObject(state.model).union(new THREE.Box3().setFromObject(result.root));
-    const center=box.getCenter(new THREE.Vector3());controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(5,4,6).normalize().multiplyScalar(Math.max(box.getSize(new THREE.Vector3()).length(),1)*1.8));
+    const center=box.getCenter(new THREE.Vector3());controls.target.copy(center);
+    camera.position.copy(center).add(new THREE.Vector3(5,4,6).normalize().multiplyScalar(Math.max(box.getSize(new THREE.Vector3()).length(),1)*1.8));
     controls.update();status('비교 모델 로드 완료 · 좌: 기준 / 우: 비교');
-  }catch(err){loader.dispose();status('비교 파일 오류: '+err.message,true);}
+  }catch(err){
+    if(comparisonRequests.isCurrent(ticket))status('비교 파일 오류: '+err.message,true);
+  }finally{
+    if(!accepted){disposeDetachedRoot(result?.root,textureMapSlots);loader.dispose();}
+  }
 }
 
 async function openFiles(files){
-  // FileInput.value is reset synchronously by the caller; snapshot FileList first.
   const inputFiles=Array.from(files||[]);
   if(!inputFiles.length)return;
+  const ticket=modelRequests.next();
+  const loader=new LocalModelLoader(renderer);
+  let accepted=false,result=null;
   setLoading(true,'모델 분석 중');status(`파일 ${inputFiles.length}개 분석 중...`);
-  // Allow UI to paint before parsing potentially heavy assets.
-  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
   try{
-    const result=await state.localLoader.load(inputFiles);
-    // Loading a new model disposes old file URL maps: defer disposing the just loaded URLs.
-    // Keep the active LocalModelLoader instance in state while replacing the old scene.
-    const justLoaded=state.localLoader;
-    state.localLoader=new LocalModelLoader(renderer);
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    if(!modelRequests.isCurrent(ticket))return;
+    result=await loader.load(inputFiles);
+    if(!modelRequests.isCurrent(ticket))return;
     installModel(result.root,{name:result.name,format:result.format,alphaRecovery:result.alphaRecovery},result.animations);
-    state.localLoader=justLoaded;
+    state.localLoader=loader;accepted=true;
   }catch(err){
-    console.error(err);status(err.message||'알 수 없는 로딩 오류',true);
-    window.alert(`모델을 열지 못했습니다.\n\n${err.message||err}`);
-  }finally{setLoading(false);}
+    if(modelRequests.isCurrent(ticket)){
+      console.error(err);status(err.message||'알 수 없는 로딩 오류',true);
+      window.alert(`모델을 열지 못했습니다.\n\n${err.message||err}`);
+    }
+  }finally{
+    if(!accepted){disposeDetachedRoot(result?.root,textureMapSlots);loader.dispose();}
+    if(accepted||modelRequests.isCurrent(ticket))setLoading(false);
+  }
 }
 
 function bindUI(){
@@ -1040,10 +1062,10 @@ function bindUI(){
   }
   // Keep browser's default open-file behavior out of the viewport on accidental drops.
   window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>e.preventDefault());
-  $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
+  $('#btnDemo').onclick=()=>{modelRequests.invalidate();installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});setLoading(false);};
   $('#btnAlphaReport').onclick=()=>{
     const inspectedMeshes=inspected();
-    const report={tool:'maxVFX Model Inspector',version:'1.0.0',asset:$('#assetTitle').textContent,
+    const report={tool:'maxVFX Model Inspector',version:'1.0.1',asset:$('#assetTitle').textContent,
       warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
       meshes:inspectedMeshes.map(mesh=>{
         const geo=state.originalGeos.get(mesh)||mesh.geometry;
@@ -1178,7 +1200,7 @@ function bindUI(){
     applyMaterialInputs(scopeMeshes());updateBloom();updateShaderStudioUI();
     status(`${p.label} 프리뷰 프리셋 적용 (Unity/Unreal 결과 보장 아님)`);
   };
-  $('#btnPresetExport').onclick=()=>{downloadJSON('maxVFX-material-preset-v1.0.json',currentPreset());status('프리셋 JSON 저장 완료');};
+  $('#btnPresetExport').onclick=()=>{downloadJSON('maxVFX-material-preset-v1.0.1.json',currentPreset());status('프리셋 JSON 저장 완료');};
   $('#btnPresetImport').onclick=()=>$('#presetFileInput').click();
   $('#presetFileInput').onchange=async e=>{
     const f=e.target.files?.[0];e.target.value='';if(!f)return;
@@ -1188,26 +1210,30 @@ function bindUI(){
   $('#btnPackExport').onclick=async()=>{
     const button=$('#btnPackExport');button.disabled=true;status('프리셋과 텍스처를 ZIP으로 묶는 중...');
     try{const JSZip=await getZipLibrary();const data=await savePack(currentPreset(),state.slotFileBlobs,state.shaderFileBlobs,JSZip);
-      downloadBlob('maxVFX-Material-Pack-v1.0.zip',data);status(`패키지 저장 완료 · ${(data.size/1024/1024).toFixed(2)}MB`);
+      downloadBlob('maxVFX-Material-Pack-v1.0.1.zip',data);status(`패키지 저장 완료 · ${(data.size/1024/1024).toFixed(2)}MB`);
     }catch(e){status('ZIP 저장 오류: '+e.message,true);}finally{button.disabled=false;}
   };
   $('#btnPackImport').onclick=()=>$('#packFileInput').click();
   $('#packFileInput').onchange=async event=>{
     const file=event.target.files?.[0];event.target.value='';if(!file)return;
     const button=$('#btnPackImport');button.disabled=true;
+    const activeGeneration=state.loadGeneration;
     try{
       if(!state.meshes.length)throw Error('프리셋을 적용할 모델을 먼저 불러오세요.');
       const JSZip=await getZipLibrary();const {manifest,files}=await loadPack(file,JSZip);
+      if(activeGeneration!==state.loadGeneration)throw Error('모델이 변경되어 이전 프리셋 복원을 취소했습니다.');
       applyPresetValues(manifest.preset);
       // The pack is applied to every mesh; individual material overrides cannot be reconstructed from one UI snapshot.
       $('#applyScope').value='all';$('#matSlotIndex').value='all';
       let errors=0;
       for(const entry of files){
+        if(activeGeneration!==state.loadGeneration)throw Error('모델 변경으로 프리셋 복원을 중단했습니다.');
         try{const ok=entry.kind==='material'?await applyUpload(entry.slot,entry.file):await loadShaderTexture(entry.slot,entry.file);if(!ok)errors++;}
         catch(error){errors++;console.warn('Pack texture import',entry.slot,error);}
       }
+      if(activeGeneration!==state.loadGeneration)throw Error('모델 변경으로 프리셋 복원을 중단했습니다.');
       state.offsetsDirty=true;applyTextureParameters();updateShaderStudioUI();
-      status(`프리셋 ZIP 로드 완료 · 이미지 ${files.length}개${errors?` · 오류 ${errors}개`:''}`,!!errors);
+      status(errors?`ZIP 부분 복원 · ${errors}개 텍스처 실패 (설정 재검토 필요)`:`프리셋 ZIP 복원 완료 · 이미지 ${files.length}개`,!!errors);
     }catch(e){status('ZIP 불러오기 오류: '+e.message,true);}finally{button.disabled=false;}
   };
   for(const id of ['compareDisplayMode','compareOpacity','compareVisible'])$('#'+id).addEventListener('input',applyCompareView);
@@ -1226,7 +1252,7 @@ function bindUI(){
     controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(1,.65,1).normalize().multiplyScalar(radius*4));controls.update();
   };
   $('#btnQAReport').onclick=()=>{
-    const report={tool:'maxVFX Model Inspector',version:'0.9.5',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
+    const report={tool:'maxVFX Model Inspector',version:'1.0.1',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
       primary:inspectAsset(state.model,state.uvChannel),secondary:state.compareRoot?inspectAsset(state.compareRoot,state.uvChannel):null,
       advancedUV:latestDiagnostic,
       notes:['Overlapping UVs can be intentional for VFX.','Pro scanner is bounded and marks partial results. Run Full QA Scan before exporting.','Draw calls and FPS depend on device and view state.']};
