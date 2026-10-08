@@ -16,7 +16,7 @@ import { finite, modelStats, textureOffsetFromVisual, triangleCount } from './uv
 import { analyzeUVStretch, extractVertexColors, analyzeVertexAlpha, locateVertexAlpha, readColorComponent } from './mesh-diagnostics.js';
 import { overlayState, alphaMaskFactor, installAlphaShader, updateAlphaShaderUniforms } from './alpha-preview.js';
 import { TEXTURE_SLOTS, ORM_SLOTS, normalScalePair, scopedMaterialIndices, materialValue, alphaMaterialSettings } from './material-controls.js';
-import { FLOW_SLOTS,blendSettings,createSlotFlow,textureTransform,flipbookAt,normalizePreset,MAX_PRESET_BYTES } from './production-core.js';
+import { FLOW_SLOTS,blendSettings,createSlotFlow,textureTransform,createTextureOverride,composeTextureTransform,flipbookAt,normalizePreset,MAX_PRESET_BYTES } from './production-core.js';
 import { exportPreset,importPreset,readControls,applyControlValues } from './preset-workflow.js';
 import { diagnoseMeshes } from './uv-diagnostics.js';
 import { inspectAsset,buildComparison } from './asset-report.js';
@@ -39,7 +39,7 @@ const state = {
   offsetsDirty:true, editableTextures:new WeakSet(), uploadedURLs:[],
   spin:false, fps:60, lastFpsUpdate:0, frameCount:0,
   pointerDown:null, dragCount:0, loadGeneration:0, slotFiles:new Map(),
-  slotFlows:new Map(), flowSeconds:0, flipbookSeconds:0, textureKTX2:null,
+  slotFlows:new Map(), textureTransforms:new Map(), flowSeconds:0, flipbookSeconds:0, textureKTX2:null,
   compareLoader:null, compareRoot:null, compareMeta:null
 };
 const slotNames=TEXTURE_SLOTS;
@@ -77,11 +77,22 @@ bloomComposer.addPass(new RenderPass(scene,camera));
 const bloomPass=new UnrealBloomPass(new THREE.Vector2(512,512),.8,.2,1);
 bloomPass.enabled=false;bloomComposer.addPass(bloomPass);bloomComposer.addPass(new OutputPass());
 const flowFields={uv:'slotFlowUV',speedX:'slotFlowX',speedY:'slotFlowY',offsetX:'slotOffsetX',offsetY:'slotOffsetY',repeatX:'slotRepeatX',repeatY:'slotRepeatY'};
-const presetFields=['matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','toggleAxes','togglePivot','axisSize','pivotScope','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
+const presetFields=['matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','toggleAxes','togglePivot','axisSize','pivotSize','pivotScope','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
 function getField(id){return $('#'+id);}
 function downloadJSON(name,data){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}
 function saveSlotFlow(){const values={};for(const [k,id] of Object.entries(flowFields))values[k]=$('#'+id).value;state.slotFlows.set($('#slotFlowSlot').value,createSlotFlow(values));state.offsetsDirty=true;}
 function loadSlotFlow(){const flow=state.slotFlows.get($('#slotFlowSlot').value)||createSlotFlow();for(const [k,id] of Object.entries(flowFields))$('#'+id).value=flow[k];}
+const manualTransformFields={tileU:'matTileU',tileV:'matTileV',offsetU:'matOffsetU',offsetV:'matOffsetV'};
+function loadManualTransform(){
+  const values=state.textureTransforms.get($('#matTexSlot').value)||createTextureOverride();
+  for(const [key,id] of Object.entries(manualTransformFields))$('#'+id).value=values[key];
+}
+function saveManualTransform(){
+  const slot=$('#matTexSlot').value, values={};
+  for(const [key,id] of Object.entries(manualTransformFields))values[key]=$('#'+id).value;
+  const next=createTextureOverride(values);
+  state.textureTransforms.set(slot,next);state.offsetsDirty=true;applyTextureParameters();
+}
 function updateBloom(){bloomPass.enabled=$('#matBloom').checked;bloomPass.strength=finite($('#matBloomStrength').value,.8);bloomPass.threshold=finite($('#matBloomThreshold').value,1);bloomPass.radius=finite($('#matBloomRadius').value,.2);}
 
 
@@ -365,7 +376,7 @@ function updateSceneGuides(){
   const showWorld=$('#toggleAxes').checked;
   const showPivot=$('#togglePivot').checked;
   const scope=$('#pivotScope').value;
-  guides.configure(state.model,state.meshes,state.selected,{size,showWorld,showPivot,scope});
+  guides.configure(state.model,state.meshes,state.selected,{size,pivotSize:Number($('#pivotSize').value)||.12,showWorld,showPivot,scope});
   $('#pivotStatus').textContent=state.selected ? `Selected · ${formatPivotReadout(state.selected)}` :
     state.model ? `${scope==='root'?'Model root':'First mesh'} · ${formatPivotReadout(scope==='root'?state.model:state.meshes[0]||state.model)}` : 'No model';
 }
@@ -621,18 +632,18 @@ function applyTextureParameters(){
   for(const mesh of state.meshes){
     const cache=state.debugMats.get(mesh)||{},list=[];
     if(cache.working)list.push(...(Array.isArray(cache.working)?cache.working:[cache.working]));
-    else if(state.uvPlaying||x||y||globalFlow.repeatX!==1||globalFlow.repeatY!==1||state.uvChannel!==0||separate||flip)list.push(...makeWorkingMaterials(mesh));
+    else if(state.uvPlaying||x||y||globalFlow.repeatX!==1||globalFlow.repeatY!==1||state.uvChannel!==0||separate||flip||state.textureTransforms.size)list.push(...makeWorkingMaterials(mesh));
     if(cache.checker)list.push(cache.checker);
     if(cache.uvgrid)list.push(cache.uvgrid);
     for(const mat of list){
       for(const slot of textureMapSlots){
         const isDebug=mat===cache.checker||mat===cache.uvgrid;
         if(isDebug&&slot!=='map')continue;
-        if(!isDebug&&!separate&&!all&&slot!=='map')continue;
+        if(!isDebug&&!separate&&!all&&slot!=='map'&&!state.textureTransforms.has(slot))continue;
         const tex=uniqueTextureForMaterial(mat,slot);if(!tex)continue;
         const chosen=(!isDebug&&separate)?state.slotFlows.get(slot)||createSlotFlow():globalFlow;
         const tile=(!isDebug&&flip&&slot===$('#flipbookSlot').value)?atlas:null;
-        const tf=textureTransform(chosen,(!isDebug&&separate)?state.flowSeconds:0,tile);
+        const tf=composeTextureTransform(textureTransform(chosen,(!isDebug&&separate)?state.flowSeconds:0,tile),state.textureTransforms.get(slot));
         if(tex.wrapS!==THREE.RepeatWrapping||tex.wrapT!==THREE.RepeatWrapping){
           tex.wrapS=tex.wrapT=THREE.RepeatWrapping;tex.needsUpdate=true;
         }
@@ -691,6 +702,7 @@ async function applyUpload(slot,file){
   const element=$(`.texture-slot[data-slot="${slot}"]`);
   element.classList.add('loaded');element.querySelector('small').textContent=file.name;
   state.slotFiles.set(slot,file.name);
+  $('#matTexSlot').value=slot;loadManualTransform(); // Show the uploaded texture's independent transform immediately.
   if(slot==='alphaMap')applyMaterialInputs(targets,'matAlphaMode');
   state.offsetsDirty=true;applyTextureParameters();setMode('material');
   status(`${file.name} → ${slot} (${targets.length} meshes) 적용`);
@@ -862,7 +874,7 @@ function bindUI(){
   $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
   $('#btnAlphaReport').onclick=()=>{
     const inspectedMeshes=inspected();
-    const report={tool:'maxVFX Model Inspector',version:'0.8.0',asset:$('#assetTitle').textContent,
+    const report={tool:'maxVFX Model Inspector',version:'0.8.2',asset:$('#assetTitle').textContent,
       warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
       meshes:inspectedMeshes.map(mesh=>{
         const geo=state.originalGeos.get(mesh)||mesh.geometry;
@@ -895,7 +907,8 @@ function bindUI(){
   $('#toggleAxes').onchange=updateSceneGuides;
   $('#togglePivot').onchange=updateSceneGuides;
   $('#pivotScope').onchange=updateSceneGuides;
-  $('#axisSize').oninput=()=>{$('#valueAxisSize').textContent=Number($('#axisSize').value).toFixed(2);updateSceneGuides();};
+  $('#axisSize').oninput=()=>{$('#valueAxisSize').textContent=Number($('#axisSize').value).toFixed(2);guides.resize(Number($('#axisSize').value),Number($('#pivotSize').value));};
+  $('#pivotSize').oninput=()=>{$('#valuePivotSize').textContent=Number($('#pivotSize').value).toFixed(2);guides.resize(Number($('#axisSize').value),Number($('#pivotSize').value));};
   $('#toggleWire').onchange=updateWireframe;
   $('#btnWire').onclick=()=>{$('#toggleWire').checked=!$('#toggleWire').checked;updateWireframe();};
   $('#btnAlphaOverlay').onclick=()=>setAlphaOverlay(!$('#toggleAlphaOverlay').checked);
@@ -971,6 +984,13 @@ function bindUI(){
     for(const [input,out] of [['matBloomStrength','valueBloomStrength'],['matBloomThreshold','valueBloomThreshold'],['matBloomRadius','valueBloomRadius']])$('#'+out).textContent=Number($('#'+input).value).toFixed(2);
     updateBloom();
   });
+  $('#matTexSlot').addEventListener('change',loadManualTransform);
+  for(const id of Object.values(manualTransformFields)){
+    $('#'+id).addEventListener('input',saveManualTransform);
+    $('#'+id).addEventListener('change',()=>{saveManualTransform();loadManualTransform();});
+  }
+  $('#btnMatTransformReset').onclick=()=>{state.textureTransforms.delete($('#matTexSlot').value);loadManualTransform();state.offsetsDirty=true;applyTextureParameters();};
+  $('#btnMatTransformUV').onclick=()=>$$('.right-tab[data-tab="uv"]')[0].click();
   $('#slotFlowSlot').addEventListener('change',loadSlotFlow);
   for(const id of Object.values(flowFields))$('#'+id).addEventListener('input',saveSlotFlow);
   $('#slotFlowEnabled').addEventListener('change',()=>{state.flowSeconds=0;state.offsetsDirty=true;applyTextureParameters();});
@@ -979,13 +999,16 @@ function bindUI(){
   $('#btnPresetExport').onclick=()=>{
     const ui=readControls(presetFields,getField);
     const slotFlows=Object.fromEntries(state.slotFlows);
-    downloadJSON('maxVFX-material-preset-v0.8.json',exportPreset(ui,slotFlows));status('프리셋 JSON 저장 완료');
+    downloadJSON('maxVFX-material-preset-v0.8.json',exportPreset(ui,slotFlows,Object.fromEntries(state.textureTransforms)));status('프리셋 JSON 저장 완료');
   };
   $('#btnPresetImport').onclick=()=>$('#presetFileInput').click();
   $('#presetFileInput').onchange=async e=>{
     const f=e.target.files?.[0];e.target.value='';if(!f)return;
     try{const p=await importPreset(f);applyControlValues(p.ui,getField);
       state.slotFlows=new Map(Object.entries(p.slotFlows));loadSlotFlow();
+      state.textureTransforms=new Map(Object.entries(p.textureTransforms||{}));loadManualTransform();
+      $('#valueAxisSize').textContent=Number($('#axisSize').value).toFixed(2);
+      $('#valuePivotSize').textContent=Number($('#pivotSize').value).toFixed(2);
       updateSceneGuides();
       state.flowPhaseX=state.flowPhaseY=state.flowSeconds=state.flipbookSeconds=0;
       $('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';
@@ -1003,7 +1026,7 @@ function bindUI(){
     controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(1,.65,1).normalize().multiplyScalar(radius*4));controls.update();
   };
   $('#btnQAReport').onclick=()=>{
-    const report={tool:'maxVFX Model Inspector',version:'0.8.0',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
+    const report={tool:'maxVFX Model Inspector',version:'0.8.2',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
       primary:inspectAsset(state.model,state.uvChannel),secondary:state.compareRoot?inspectAsset(state.compareRoot,state.uvChannel):null,
       notes:['Overlapping UVs can be intentional for VFX.','Large meshes are sampled for diagnostics.','Draw calls and FPS depend on device and view state.']};
     downloadJSON('maxVFX-production-report.json',report);status('검수 리포트 저장 완료');

@@ -1,5 +1,5 @@
 import {FLOW_SLOTS,normalizePreset,materialSnapshot,MAX_PRESET_BYTES} from './production-core.js';
-export function exportPreset(ui,slotFlows){return normalizePreset({schema:'maxvfx-inspector-preset',version:1,ui:materialSnapshot(ui),slotFlows});}
+export function exportPreset(ui,slotFlows,textureTransforms={}){return normalizePreset({textureTransforms,schema:'maxvfx-inspector-preset',version:1,ui:materialSnapshot(ui),slotFlows});}
 export async function importPreset(file){
  if(!file||file.size>MAX_PRESET_BYTES)throw Error('프리셋 크기가 허용 범위를 넘습니다 (512KB).');
  let parsed;try{parsed=JSON.parse(await file.text());}catch{throw Error('JSON 파싱에 실패했습니다.');}

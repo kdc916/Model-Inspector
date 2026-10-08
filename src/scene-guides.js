@@ -21,7 +21,7 @@ function disposeTree(group) {
 /** Pivot XYZ arrows with a real origin marker, rather than camera-sized static lines. */
 export class SceneGuides {
   constructor(THREE, scene) {
-    this.THREE = THREE;this.scene=scene;this.world=null;this.pivots=[];
+    this.THREE = THREE;this.scene=scene;this.world=null;this.pivots=[];this.diagonal=1;
   }
   clearPivots() {
     for (const {group} of this.pivots) {group.removeFromParent();disposeTree(group);}
@@ -55,20 +55,27 @@ export class SceneGuides {
     dot.name='Pivot Origin'; dot.renderOrder=1002;group.add(dot);
     return group;
   }
-  configure(model,meshes,selected,{size=.35,showWorld=false,showPivot=true,scope='selected'}={}) {
+  configure(model,meshes,selected,{size=.35,pivotSize=.12,showWorld=false,showPivot=true,scope='selected'}={}) {
     this.clearPivots();
     if (this.world) {this.world.removeFromParent();disposeTree(this.world);this.world=null;}
     if (!model) return;
     model.updateWorldMatrix(true,true);
     const bounds=new this.THREE.Box3().setFromObject(model);
     const diagonal=bounds.isEmpty()?1:bounds.getSize(new this.THREE.Vector3()).length();
-    const length=guideLength(diagonal,size);
-    if (showWorld) {this.world=this.makeAxis(length);this.world.name='World Axis (0, 0, 0)';this.scene.add(this.world);}
+    this.diagonal=diagonal;
+    if (showWorld) {this.world=this.makeAxis(1);this.world.name='World Axis (0, 0, 0)';this.scene.add(this.world);}
     if (showPivot) {
       const targets=scope==='root'?[model]:scope==='all'?meshes.slice(0,64):[selected||meshes[0]||model];
-      for (const node of targets) {const group=this.makeAxis(length);this.scene.add(group);this.pivots.push({node,group});}
+      for (const node of targets) {const group=this.makeAxis(1);this.scene.add(group);this.pivots.push({node,group});}
       this.followPivots();
     }
+    this.resize(size,pivotSize);
+  }
+  /** Resize guides in place, preserving meshes, origins and animated pivot orientation. */
+  resize(worldSize=.35,pivotSize=.12) {
+    this.world?.scale.setScalar(guideLength(this.diagonal,worldSize));
+    const pivotLength=guideLength(this.diagonal,pivotSize);
+    for(const {group} of this.pivots)group.scale.setScalar(pivotLength);
   }
   followPivots() {
     for (const {node,group} of this.pivots) {

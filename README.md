@@ -1,3 +1,11 @@
+## v0.8.2 (2026-10-08) — Pivot Size / Material UV Transform
+
+- Inspector: **World Axis** 크기와 **Mesh Pivot** 크기 슬라이더 독립 적용. 기존 `axisSize` 프리셋 호환, 신규 `pivotSize` 프리셋 저장.
+- 가이드 크기 드래그 시 지오메트리를 매번 다시 생성하지 않고 `SceneGuides.resize()`로 스케일만 조절.
+- Material 탭: 9개 텍스처 슬롯마다 Tiling U/V 및 수동 Offset U/V. 값은 기존 글로벌/개별 UV Flow에 곱셈/덧셈으로 결합되며 애니메이션을 멈추지 않음.
+- Preset JSON: `textureTransforms` 맵을 검증/저장/복원. 이전 프리셋에서도 기본값 적용.
+- FBX Vertex Alpha import와 Apply Alpha 프리뷰는 변경하지 않음.
+
 # maxVFX Model Inspector
 
 > 3D Asset Workbench — 브라우저에서 모델 구조, UV, 노멀, PBR 텍스처, UV Flow를 검수하는 도구.

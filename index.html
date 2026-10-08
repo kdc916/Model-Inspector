@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.8.1</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.8.2</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -85,7 +85,9 @@
         <div class="section-title separated"><span>AXIS &amp; PIVOT GUIDES</span><span class="chip">XYZ</span></div>
         <div class="description">World Axis는 (0,0,0) 기준, Pivot XYZ는 모델/메시의 실제 로컬 원점과 월드 방향을 표시합니다. X 빨강 · Y 초록 · Z 파랑.</div>
         <div class="field"><label for="pivotScope">Pivot target</label><select id="pivotScope"><option value="selected">Selected mesh / first mesh</option><option value="all">All meshes (max 64)</option><option value="root">Model root</option></select></div>
-        <div class="field"><label for="axisSize">Gizmo relative size <output id="valueAxisSize">0.35</output></label><input id="axisSize" type="range" min="0.05" max="1.5" step="0.05" value="0.35"></div>
+        <div class="field"><label for="axisSize">World Axis size <output id="valueAxisSize">0.35</output></label><input id="axisSize" type="range" min="0.05" max="1.5" step="0.01" value="0.35"></div>
+        <div class="field"><label for="pivotSize">Mesh Pivot size <output id="valuePivotSize">0.12</output></label><input id="pivotSize" type="range" min="0.05" max="1.5" step="0.01" value="0.12"></div>
+        <div class="note small-note">World Axis와 Mesh Pivot의 길이를 각각 조절합니다. 크기는 모델 전체 대각선 길이를 기준으로 합니다.</div>
         <div class="diagnostic-result" id="pivotStatus">No model</div>
         <div class="section-title separated"><span>ANIMATION</span></div>
         <div class="field"><label for="animationSelect">Model clip</label><select id="animationSelect"><option value="">No animation</option></select></div>
@@ -144,6 +146,13 @@
           <label class="texture-slot" data-slot="displacementMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="displacementMap"><span class="texture-icon">△</span><strong>Height / Displacement</strong><small>Upload image</small></label>
         </div>
         <div class="description">텍스처 슬롯을 클릭해서 이미지를 등록합니다. × 버튼으로 슬롯을 비울 수 있습니다. 노멀·Roughness·AO 등의 맵은 데이터 텍스처로 처리합니다.</div>
+        <div class="section-title separated"><span>TEXTURE TRANSFORM</span><span class="chip">UV</span></div>
+        <div class="description">각 텍스처의 Tiling / Offset을 UV Flow와 별개로 조절합니다. Flow 재생 중에도 수동 값이 유지됩니다.</div>
+        <div class="field"><label for="matTexSlot">Texture slot</label><select id="matTexSlot"><option value="map">Base Color / Checker</option><option value="emissiveMap">Emissive</option><option value="alphaMap">Opacity / Mask</option><option value="normalMap">Normal</option><option value="roughnessMap">Roughness</option><option value="metalnessMap">Metallic</option><option value="aoMap">AO</option><option value="bumpMap">Bump</option><option value="displacementMap">Height</option></select></div>
+        <div class="speed-grid"><div class="field"><label for="matTileU">Tiling U</label><input id="matTileU" type="number" min="0.01" max="128" step="0.1" value="1"></div><div class="field"><label for="matTileV">Tiling V</label><input id="matTileV" type="number" min="0.01" max="128" step="0.1" value="1"></div></div>
+        <div class="speed-grid"><div class="field"><label for="matOffsetU">Offset U</label><input id="matOffsetU" type="number" min="-4096" max="4096" step="0.05" value="0"></div><div class="field"><label for="matOffsetV">Offset V</label><input id="matOffsetV" type="number" min="-4096" max="4096" step="0.05" value="0"></div></div>
+        <div class="inline-actions"><button class="subtle" id="btnMatTransformReset">↺ 이 슬롯 초기화</button><button class="subtle" id="btnMatTransformUV">UV & Flow 열기</button></div>
+        <div class="note small-note">수동 Offset +U/+V는 눈에 보이는 텍스처 이동 방향입니다. 현재 UV & Flow의 Repeat·Offset·애니메이션 위에 추가 적용됩니다.</div>
         <div class="section-title separated"><span>BASE / SURFACE</span></div>
         <div class="field"><label for="matColor">Base tint</label><input type="color" id="matColor" value="#ffffff"></div>
         <div class="field"><label for="matBaseStrength">Base color intensity <output id="valueBaseStrength">1.00</output></label><input id="matBaseStrength" type="range" min="0" max="2" step="0.05" value="1"></div>

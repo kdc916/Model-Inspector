@@ -14,6 +14,16 @@ export function createSlotFlow(v={}) {
   return { uv:Math.round(bound(v.uv,0,3,0)), speedX:bound(v.speedX,-8,8,0), speedY:bound(v.speedY,-8,8,0),
     offsetX:bound(v.offsetX,-4096,4096,0),offsetY:bound(v.offsetY,-4096,4096,0),repeatX:bound(v.repeatX,.01,128,1), repeatY:bound(v.repeatY,.01,128,1) };
 }
+/** Independent per-texture manual transform, composited after animated flow. */
+export function createTextureOverride(v={}) {
+  return {tileU:bound(v.tileU,.01,128,1),tileV:bound(v.tileV,.01,128,1),
+    offsetU:bound(v.offsetU,-4096,4096,0),offsetV:bound(v.offsetV,-4096,4096,0)};
+}
+export function composeTextureTransform(base,override={}) {
+  const o=createTextureOverride(override);
+  return {...base,repeatX:base.repeatX*o.tileU,repeatY:base.repeatY*o.tileV,
+    offsetX:base.offsetX-o.offsetU,offsetY:base.offsetY-o.offsetV};
+}
 export function flipbookAt(t, {cols=1,rows=1,fps=12,loop=true}={}) {
   cols=Math.floor(bound(cols,1,64,1)); rows=Math.floor(bound(rows,1,64,1));
   fps=bound(fps,.01,120,12);const frames=cols*rows;
@@ -36,7 +46,7 @@ export function materialSnapshot(form={}) {
     'matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull',
     'matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength',
     'matBloom','matBloomStrength','matBloomRadius','matBloomThreshold',
-    'toggleAxes','togglePivot','axisSize','pivotScope',
+    'toggleAxes','togglePivot','axisSize','pivotSize','pivotScope',
     'flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures',
     'slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
   return Object.fromEntries(keys.filter(k=>Object.hasOwn(form,k)).map(k=>[k,form[k]]));
@@ -47,7 +57,8 @@ export function normalizePreset(raw) {
   if(!rawUI||typeof rawUI!=='object'||Array.isArray(rawUI))throw Error('프리셋 UI 데이터가 없습니다.');
   const safe={};for(const [k,v] of Object.entries(materialSnapshot(rawUI))){if(typeof v==='boolean')safe[k]=v;else if(typeof v==='string'&&v.length<=100)safe[k]=v;else if(typeof v==='number'&&Number.isFinite(v))safe[k]=String(v);}
   const slotFlows={};for(const k of FLOW_SLOTS)if(raw.slotFlows?.[k])slotFlows[k]=createSlotFlow(raw.slotFlows[k]);
-  return {schema:'maxvfx-inspector-preset',version:1,ui:safe,slotFlows,texturesNote:'Texture file contents are not embedded in presets.'};
+  const textureTransforms={};for(const k of FLOW_SLOTS)if(raw.textureTransforms?.[k])textureTransforms[k]=createTextureOverride(raw.textureTransforms[k]);
+  return {schema:'maxvfx-inspector-preset',version:1,ui:safe,slotFlows,textureTransforms,texturesNote:'Texture file contents are not embedded in presets.'};
 }
 export function compareSummaries(a,b) {
   if(!a||!b)throw Error('두 모델이 필요합니다.');
