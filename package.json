@@ -1,6 +1,6 @@
 {
   "name": "maxvfx-model-inspector",
-  "version": "0.9.0",
+  "version": "0.9.5",
   "private": true,
   "type": "module",
   "description": "Browser-based game VFX mesh, UV, vertex alpha, Shader Studio and material inspection tool",

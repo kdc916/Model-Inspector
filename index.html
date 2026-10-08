@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.9.0</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.9.5</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -69,7 +69,16 @@
         <div class="section-title separated"><span>UV CHANNELS</span><span class="chip" id="uvSummary">—</span></div>
         <div class="uv-health" id="uvHealth">모델의 UV 상태를 분석합니다.</div><div class="diagnostic-result" id="stretchHealth" aria-live="polite">UV stretch 검사 준비 중</div>
         <div class="field" id="vertexOptions" hidden><label for="vertexChannel">Vertex RGBA visualization</label><select id="vertexChannel"><option value="rgb">RGB combined</option><option value="r">Red</option><option value="g">Green</option><option value="b">Blue</option><option value="a">Alpha (grayscale)</option></select></div>
-        <div class="section-title separated"><span>UV PRODUCTION DIAGNOSTICS</span></div><button class="subtle full" id="btnUVAnalyze">◈ UV 품질 분석</button><div class="diagnostic-result" id="uvDiagnostics">겹침·뒤집힘·퇴화 UV와 노멀을 분석합니다. VFX에서는 중첩이 의도적일 수 있습니다.</div><div class="diagnostic-result" id="vertexAlphaHealth">Vertex Alpha 채널을 검사합니다.</div>
+        <div class="section-title separated"><span>UV / MESH DIAGNOSTICS PRO</span><span class="chip">0.9.5</span></div>
+        <div class="speed-grid">
+          <div class="field"><label for="diagResolution">Texture resolution (px)</label><select id="diagResolution"><option value="256">256</option><option value="512">512</option><option value="1024" selected>1024</option><option value="2048">2048</option><option value="4096">4096</option><option value="8192">8192</option></select></div>
+          <div class="field"><label for="diagUnits">Model units per meter</label><select id="diagUnits"><option value="1" selected>1 (meter · Unity)</option><option value="100">100 (cm · Unreal)</option><option value="0.01">0.01 (100m per unit)</option><option value="1000">1000 (mm)</option></select></div>
+        </div>
+        <div class="field"><label for="diagMaxFaces">Maximum faces per mesh</label><select id="diagMaxFaces"><option value="5000">5,000 (quick)</option><option value="50000">50,000</option><option value="150000" selected>150,000</option><option value="300000">300,000</option></select></div>
+        <div class="inline-actions"><button class="subtle" id="btnUVAnalyze">◈ Full QA Scan</button><button class="subtle" id="btnDiagCancel" disabled>✕ Cancel</button></div>
+        <div class="inline-actions"><button class="subtle" id="btnDiagExport" disabled>↓ QA JSON</button></div>
+        <div class="diagnostic-result" id="uvDiagnostics" aria-live="polite">Worker에서 UV 겹침·뒤집힘·퇴화 및 Texel Density를 분석합니다. 의도적인 VFX UV 겹침은 오류가 아닙니다.</div>
+        <div class="note small-note">UV 중첩 계산은 안전 예산을 초과하면 하한값으로 보고됩니다. Texel Density는 텍스처 해상도와 모델의 실제 단위 설정에 의존하며, UV 겹침과 음수 방향은 제작 의도일 수 있습니다.</div><div class="diagnostic-result" id="vertexAlphaHealth">Vertex Alpha 채널을 검사합니다.</div>
         <button class="subtle full" id="btnAlphaReport">⇩ Vertex Alpha 진단 리포트 (.json)</button>
         <div class="note small-note">3ds Max의 Vertex Alpha는 Map Channel -2입니다. FBX에서 RGB만 들어오면 알파를 1로 만들지 않고 핑크색으로 표시합니다. 흰색으로만 나타나면 보고서에서 'A 채널 미포함'과 'A=1.0'을 구분하세요.</div>
         <div class="section-title separated"><span>VERTEX ALPHA OVERLAY</span><span class="chip">LIVE</span></div>
@@ -189,7 +198,10 @@
         <button class="subtle full" id="btnMaterialReset">↺ 원본 재질 복원</button>
       </section>
       <section class="tabpage" id="page-shader">
-        <div class="section-title"><span>VFX SHADER STUDIO</span><span class="chip accent-chip">0.9</span></div>
+        <div class="section-title"><span>VFX SHADER STUDIO</span><span class="chip accent-chip">0.9.5</span></div>
+        <div class="field"><label for="fxLookPreset">Engine-inspired preview preset</label><select id="fxLookPreset"><option value="">Custom / current settings</option><option value="shield">Energy Shield · Fresnel</option><option value="dissolve">Dissolve · URP-style</option><option value="aura">Aura · Niagara-style</option><option value="smoke">Soft Smoke · Depth Fade</option></select></div>
+        <button class="subtle full" id="fxApplyLook">Apply Preview Look</button>
+        <div class="note small-note">게임 엔진 머티리얼 에셋을 생성하지 않는 Three.js 기반 참고 프리셋입니다. Unity URP/Unreal에 동일한 셰이더 결과를 보장하지 않습니다.</div>
         <label class="check material-check"><input id="fxEnabled" type="checkbox"> Enable Shader Studio (Material / Checker / UV Grid)</label>
         <div class="note small-note">기존 FBX 및 텍스처는 수정하지 않습니다. Vertex Alpha, UV Flow와 합성됩니다. 이 기능은 Three.js WebGL 기반 미리보기이며 엔진 셰이더의 완전한 재현은 아닙니다.</div>
         <div class="section-title separated"><span>FRESNEL RIM</span></div>
@@ -218,10 +230,11 @@
         <div class="field"><label>Distortion <output id="outFxDistort">0.00</output></label><input id="fxDistort" type="range" min="0" max="0.3" step="0.005" value="0"></div>
         <div class="note small-note">Main Color UV만 왜곡합니다. Normal/AlphaMap의 UV는 보존됩니다. 절차적 노이즈 또는 업로드한 Noise를 이용합니다.</div>
         <div class="section-title separated"><span>SOFT PARTICLE / DEPTH FADE</span></div>
-        <label class="check material-check"><input id="fxDepthFade" type="checkbox"> Enable depth fade (test plane)</label>
+        <label class="check material-check"><input id="fxDepthFade" type="checkbox"> Enable depth fade</label>
+        <div class="field"><label for="fxDepthSource">Depth Occluder</label><select id="fxDepthSource"><option value="plane">Test Plane</option><option value="comparison">Comparison Model (B)</option><option value="both">Test Plane + Comparison Model</option></select></div>
         <label class="check material-check"><input id="fxPlaneVisible" type="checkbox" checked> Show test plane</label>
         <div class="field"><label>Fade distance <output id="outFxFadeDistance">0.50</output></label><input id="fxFadeDistance" type="range" min="0.001" max="25" step="0.05" value="0.5"></div>
-        <div class="note small-note">테스트 평면과 VFX 메시의 실제 깊이 차이를 사용합니다. 테스트 평면만 Depth Prepass에 포함되며 복잡한 씬 전체 충돌은 아직 지원하지 않습니다. Bloom 및 Additive 합성과 함께 테스트할 수 있습니다.</div>
+        <div class="note small-note">테스트 평면과 VFX 메시의 실제 깊이 차이를 사용합니다. 비교 모델(B)을 불러오면 Depth Occluder를 B 또는 B+Plane으로 선택할 수 있습니다. 모델 A의 자기 가림은 제외합니다. 비교 모델의 투명 재질도 Depth Occluder에서는 불투명으로 취급합니다. Bloom 및 Additive 합성과 함께 테스트할 수 있습니다.</div>
         <button class="subtle full" id="fxReset">↺ Shader Studio 초기화</button>
       </section>
 

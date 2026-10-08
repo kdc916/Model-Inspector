@@ -1,14 +1,40 @@
+## v0.9.5 · Mesh / UV Diagnostics Pro + Shader Preview Presets (2026-10-08)
+
+### UV / Mesh Diagnostics Pro
+- `Inspector > UV / Mesh Diagnostics Pro`에서 텍스처 해상도(256~8192px), **model units per meter**(1=Unity meter, 100=Unreal centimeters), 메시당 검사 면 수(5,000~300,000)를 설정합니다.
+- `Full QA Scan`은 Web Worker에서 계산합니다. 메시별 진행률, 취소, JSON 출력이 가능합니다. Worker를 사용할 수 없는 환경은 순차 폴백을 사용합니다.
+- 정점 위치 중복, 면적 0인 삼각형, 무효 정점 인덱스, UV 중첩 *쌍*, UV 방향 반전, 퇴화 UV, UV 0~1 외부 좌표, 잘못된 노멀 및 반대 방향 노멀을 검사합니다.
+- **Texel Density**는 해상도 × √(UV 면적/월드 표면적) × (모델 단위/미터)로 계산한 px/m 값입니다. 원본 피벗, 모델 변환, 월드 스케일을 반영합니다. DCC exporter의 단위 변환을 고려해 `units per meter`를 설정해야 합니다.
+- 큰 UV가 그리드/비교 예산을 넘는 경우 `overlapIncomplete`를 표시하고 **중첩 개수를 확정값으로 취급하지 않습니다**. 검사 면 예산 초과 시 `partial` 플래그가 붙습니다. UV 중첩이나 음수 UV 방향은 VFX에서 의도된 경우가 많습니다.
+- 진단 리포트는 `QA JSON`으로 저장하며, Workflow의 Production Report에도 최근 진단 데이터가 포함됩니다. 원본 모델과 UV는 수정하지 않습니다.
+
+### Shader Studio 프리셋
+- **Energy Shield**, **Dissolve · URP-style**, **Aura · Niagara-style**, **Soft Smoke** 4종. 사용자가 직접 값을 수정하거나 기존 JSON 프리셋으로 저장할 수 있습니다.
+- 이 프리셋은 Three.js 렌더링을 위한 *참고용 수치 템플릿*입니다. Unity URP 셰이더 코드나 UE Niagara 머티리얼 에셋으로 변환하지 않습니다.
+
+### Depth Fade 확장
+- 기존 Test Plane 외에 `Comparison Model (B)` 또는 `Plane + B`를 Depth Occluder로 선택할 수 있습니다. 비교 모델은 Workflow 탭에서 불러옵니다.
+- 모델 A 스스로의 표면을 깊이 가림에 사용하지 않아 자기 가림을 피합니다. B 모델의 불투명 표면만 깊이 기준으로 다루며 B 재질의 실제 Alpha Clip/투명도는 재현하지 않습니다.
+- 진단 스캐너와 Depth Preview는 원본 지오메트리를 수정하지 않습니다.
+
+### QA / 배포 제한
+- `npm test`는 90개 단위/구조 검증을 포함합니다. 정적 UI 구조도 점검했으며 WebGL 실제 GPU 픽셀 검증은 CDN 접근 제한 때문에 미실행 상태입니다.
+- 고밀도 메시의 검사 데이터 복제는 일시적으로 메모리를 사용합니다. 최대 검사 면 수를 줄이거나 Cancel을 이용하세요. Web Worker 취소는 진행 중인 작업을 종료합니다.
+- 모델/메시/텍스처 파일은 GitHub Pages에 업로드하지 않고 브라우저 내에서 처리합니다. 라이브러리 JS 파일 다운로드에는 인터넷 연결이 필요합니다.
+
+---
+
 - Inspector: **World Axis** 크기와 **Mesh Pivot** 크기 슬라이더 독립 적용. 기존 `axisSize` 프리셋 호환, 신규 `pivotSize` 프리셋 저장.
 - 가이드 크기 드래그 시 지오메트리를 매번 다시 생성하지 않고 `SceneGuides.resize()`로 스케일만 조절.
 - Material 탭: 9개 텍스처 슬롯마다 Tiling U/V 및 수동 Offset U/V. 값은 기존 글로벌/개별 UV Flow에 곱셈/덧셈으로 결합되며 애니메이션을 멈추지 않음.
 - Preset JSON: `textureTransforms` 맵을 검증/저장/복원. 이전 프리셋에서도 기본값 적용.
 - FBX Vertex Alpha import와 Apply Alpha 프리뷰는 변경하지 않음.
 
-# maxVFX Model Inspector v0.9.0
+# maxVFX Model Inspector v0.9.5
 
 > 3D Asset Workbench — 브라우저에서 모델 구조, UV, 노멀, PBR 텍스처, UV Flow를 검수하는 도구.
 >
-> **Version:** 0.3.0 (2026-10-08) · Three.js `0.186.0` 고정 · 별도 백엔드 불필요
+> **Version:** 0.9.5 (2026-10-08) · Three.js `0.186.0` 고정 · 별도 백엔드 불필요
 
 
 ## v0.9.0 · VFX Shader Studio (2026-10-08)

@@ -19,6 +19,8 @@ import { TEXTURE_SLOTS, ORM_SLOTS, normalScalePair, scopedMaterialIndices, mater
 import { FLOW_SLOTS,blendSettings,createSlotFlow,textureTransform,createTextureOverride,composeTextureTransform,flipbookAt,normalizePreset,MAX_PRESET_BYTES } from './production-core.js';
 import { exportPreset,importPreset,readControls,applyControlValues } from './preset-workflow.js';
 import { diagnoseMeshes } from './uv-diagnostics.js';
+import { createDiagnosticSnapshot, inspectGeometryPro, summarizeDiagnostics } from './diagnostics-pro.js';
+import { resolveShaderPreset } from './shader-presets.js';
 import { inspectAsset,buildComparison } from './asset-report.js';
 import { SceneGuides, formatPivotReadout } from './scene-guides.js';
 import { resolvePreviewBlend, applyPreviewBlend } from './render-state.js';
@@ -79,6 +81,74 @@ bloomComposer.addPass(new RenderPass(scene,camera));
 const bloomPass=new UnrealBloomPass(new THREE.Vector2(512,512),.8,.2,1);
 bloomPass.enabled=false;bloomComposer.addPass(bloomPass);bloomComposer.addPass(new OutputPass());
 const depthPreview=new DepthPreview(THREE,renderer,scene,camera);
+let diagnosticWorker=null,diagnosticJob=0,latestDiagnostic=null;
+function cancelDiagnostics(silent=false){
+  ++diagnosticJob;
+  if(diagnosticWorker){diagnosticWorker.terminate();diagnosticWorker=null;}
+  const cancel=$('#btnDiagCancel'),scan=$('#btnUVAnalyze');
+  if(cancel)cancel.disabled=true;if(scan)scan.disabled=false;
+  if(!silent){$('#uvDiagnostics').textContent='검사 취소됨 · 기존 리포트는 새 모델 또는 재검사 시 갱신됩니다.';status('진단 취소됨');}
+}
+function formatProDiagnostics(result){
+  const s=result.summary,fmtNo=x=>Number(x||0).toLocaleString('en-US');
+  const lines=[`UV${result.options.channel||0} / ${result.options.resolution}px · ${result.options.unitsPerMeter} unit/m`,
+    `Triangles ${fmtNo(s.analyzed)} / ${fmtNo(s.faces)} · Meshes ${s.meshes}`,
+    `UV overlap pairs ${fmtNo(s.overlapPairs)}${s.overlapIncompleteMeshes?' (lower bound)':''} · Mirrored/negative UV ${fmtNo(s.flippedUV)}`,
+    `Degenerate UV ${fmtNo(s.degenerateUV)} · Geometry ${fmtNo(s.degenerateGeometry)} · Out-of-0..1 ${fmtNo(s.uvOutOfBoundsFaces)}`,
+    `Normals: opposing ${fmtNo(s.opposingNormals)} · invalid ${fmtNo(s.invalidNormals)} · repeated position verts ${fmtNo(s.duplicatePositionVertices)}`];
+  for(const r of result.reports.slice(0,12)){
+    lines.push(`${r.name}: ${fmtNo(r.analyzed)}/${fmtNo(r.faces)} faces | ${r.texelDensityPxPerMeter===null?'Texel n/a':r.texelDensityPxPerMeter.toFixed(1)+' px/m'} | overlaps ${r.overlapPairs}${r.partial?' (partial)':''}`);
+  }
+  if(result.reports.length>12)lines.push(`+${result.reports.length-12} more meshes in JSON`);
+  if(s.partialMeshes||s.overlapIncompleteMeshes)lines.push(`⚠ Partial results: ${s.partialMeshes} face-limited meshes, ${s.overlapIncompleteMeshes} overlap-budget meshes`);
+  lines.push('※ UV 반전·중첩은 VFX에서 의도적인 표현일 수 있습니다.');
+  return lines.join('\n');
+}
+async function scanProDiagnostics(){
+  cancelDiagnostics(true);const id=diagnosticJob;
+  const input=inspected();if(!input.length){$('#uvDiagnostics').textContent='진단할 메시가 없습니다.';return;}
+  const options={channel:state.uvChannel,resolution:Number($('#diagResolution').value),unitsPerMeter:Number($('#diagUnits').value),maxFaces:Number($('#diagMaxFaces').value),maxOverlapTests:200000};
+  $('#btnUVAnalyze').disabled=true;$('#btnDiagCancel').disabled=false;$('#btnDiagExport').disabled=true;
+  $('#uvDiagnostics').textContent='진단용 메시 데이터 준비 중...';
+  try{
+    const snapshots=[];
+    for(let i=0;i<input.length;i++){
+      if(id!==diagnosticJob)return;
+      const mesh=input[i],g=state.originalGeos.get(mesh)||mesh.geometry;
+      mesh.updateMatrixWorld(true);
+      snapshots.push(createDiagnosticSnapshot(g,mesh.name||`Mesh ${i+1}`,options.channel,mesh.matrixWorld));
+      if(i%4===3)await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    if(id!==diagnosticJob)return;
+    const finish=result=>{
+      if(id!==diagnosticJob)return;
+      latestDiagnostic={...result,asset:$('#assetTitle').textContent,generatedAt:new Date().toISOString()};
+      $('#uvDiagnostics').textContent=formatProDiagnostics(latestDiagnostic);
+      $('#btnUVAnalyze').disabled=false;$('#btnDiagCancel').disabled=true;$('#btnDiagExport').disabled=false;
+      diagnosticWorker?.terminate();diagnosticWorker=null;status('UV / Mesh QA Pro 진단 완료');
+    };
+    if(typeof Worker!=='undefined'){
+      const worker=new Worker(new URL('./diagnostics.worker.js',import.meta.url),{type:'module'});diagnosticWorker=worker;
+      worker.onmessage=({data})=>{
+        if(data.id!==id||id!==diagnosticJob)return;
+        if(data.type==='progress')$('#uvDiagnostics').textContent=`Worker 검사 ${data.completed}/${data.total} meshes · ${data.name}`;
+        else if(data.type==='complete')finish(data.result);
+        else if(data.type==='error'){cancelDiagnostics(true);$('#uvDiagnostics').textContent='진단 오류: '+data.message;status('진단 오류',true);}
+      };
+      worker.onerror=event=>{if(id!==diagnosticJob)return;cancelDiagnostics(true);$('#uvDiagnostics').textContent='Worker 오류: '+(event.message||'실행 불가');status('Worker 오류',true);};
+      worker.postMessage({id,meshes:snapshots,options},snapshots.flatMap(s=>[s.position.buffer,s.uv?.buffer,s.normal?.buffer,s.index?.buffer].filter(Boolean)));
+    }else{
+      const results=[];
+      for(let i=0;i<snapshots.length;i++){
+        if(id!==diagnosticJob)return;
+        results.push(inspectGeometryPro(snapshots[i],options));
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+      finish(summarizeDiagnostics(results,options));
+    }
+  }catch(e){if(id!==diagnosticJob)return;cancelDiagnostics(true);$('#uvDiagnostics').textContent='진단 오류: '+String(e.message||e);status('진단 오류',true);}
+}
+
 const shaderControls=Object.keys(SHADER_FIELD_DEFAULTS);
 function shaderUI(){return Object.fromEntries(shaderControls.map(id=>[id,$('#'+id)?.type==='checkbox'?$('#'+id).checked:$('#'+id)?.value]));}
 function shaderSettings(){return normalizeShaderStudio(shaderUI());}
@@ -88,7 +158,7 @@ function updateShaderForMaterial(mat){
   updateShaderStudio(mat,THREE,shaderSettings(),{time:state.shaderSeconds,noiseTexture:state.shaderMaps.noise,maskTexture:state.shaderMaps.mask,...depthPreview.uniforms});
 }
 function updateShaderStudioUI({rebuild=true}={}){
-  const settings=shaderSettings();depthPreview.configure(settings.fxEnabled&&settings.fxDepthFade,settings.fxPlaneVisible);
+  const settings=shaderSettings();depthPreview.configure(settings.fxEnabled&&settings.fxDepthFade,settings.fxPlaneVisible,settings.fxDepthSource);
   if(rebuild)updateDisplayMaterial();
   for(const mesh of state.meshes){const cache=state.debugMats.get(mesh)||{};for(const key of ['working','checker','uvgrid'])for(const mat of (cache[key]?(Array.isArray(cache[key])?cache[key]:[cache[key]]):[])){
     if(settings.fxEnabled)updateShaderForMaterial(mat);
@@ -303,6 +373,7 @@ function updateDisplayMaterial(){
 }
 function setMode(mode){state.mode=mode;updateDisplayMaterial();}
 function disposeModel(){
+  cancelDiagnostics(true);latestDiagnostic=null;$('#btnDiagExport').disabled=true;
   state.loadGeneration++;
   state.uvPlaying=false;state.animationPlaying=false;state.sceneMixer?.stopAllAction();state.sceneMixer=null;
   $('#btnUVPlay').textContent='▶ UV Flow Play';$('#btnAnimToggle').textContent='▶ Play';
@@ -843,6 +914,7 @@ function updateDiagnostics(){
   return data;
 }
 function disposeComparison(){
+  depthPreview.setReferenceRoot(null);
   if(state.compareRoot){scene.remove(state.compareRoot);
     const geometries=new Set(),mats=new Set(),textures=new Set();
     state.compareRoot.traverse(o=>{if(o.geometry)geometries.add(o.geometry);
@@ -858,7 +930,7 @@ async function openComparison(files){
   const loader=new LocalModelLoader(renderer);
   try{
     status('비교 모델 로딩 중...');const result=await loader.load(files);
-    disposeComparison();state.compareRoot=result.root;state.compareLoader=loader;state.compareMeta=result;
+    disposeComparison();state.compareRoot=result.root;state.compareLoader=loader;state.compareMeta=result;depthPreview.setReferenceRoot(result.root);updateShaderStudioUI({rebuild:false});
     const primaryBox=new THREE.Box3().setFromObject(state.model);
     const secondaryBox=new THREE.Box3().setFromObject(result.root);
     if(!primaryBox.isEmpty()&&!secondaryBox.isEmpty()){
@@ -913,7 +985,7 @@ function bindUI(){
   $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
   $('#btnAlphaReport').onclick=()=>{
     const inspectedMeshes=inspected();
-    const report={tool:'maxVFX Model Inspector',version:'0.9.0',asset:$('#assetTitle').textContent,
+    const report={tool:'maxVFX Model Inspector',version:'0.9.5',asset:$('#assetTitle').textContent,
       warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
       meshes:inspectedMeshes.map(mesh=>{
         const geo=state.originalGeos.get(mesh)||mesh.geometry;
@@ -1034,7 +1106,20 @@ function bindUI(){
   for(const id of Object.values(flowFields))$('#'+id).addEventListener('input',saveSlotFlow);
   $('#slotFlowEnabled').addEventListener('change',()=>{state.flowSeconds=0;state.offsetsDirty=true;applyTextureParameters();});
   for(const id of ['flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'])$('#'+id).addEventListener('change',()=>{state.flipbookSeconds=0;state.offsetsDirty=true;applyTextureParameters();});
-  $('#btnUVAnalyze').onclick=()=>updateDiagnostics();
+  $('#btnUVAnalyze').onclick=scanProDiagnostics;
+  $('#btnDiagCancel').onclick=()=>cancelDiagnostics();
+  $('#btnDiagExport').onclick=()=>{if(!latestDiagnostic)return;downloadJSON('maxVFX-UV-Mesh-QA-v0.9.5.json',latestDiagnostic);status('상세 QA 리포트 저장 완료');};
+  $('#fxApplyLook').onclick=()=>{
+    const p=resolveShaderPreset($('#fxLookPreset').value);if(!p){status('프리셋을 선택하세요.');return;}
+    for(const [id,value] of Object.entries({...p.settings,...p.material})){
+      const el=$('#'+id);if(!el)continue;
+      if(el.type==='checkbox')el.checked=Boolean(value);else el.value=value;
+      const out=$('#out'+id[0].toUpperCase()+id.slice(1));if(out&&el.type==='range')out.textContent=Number(el.value).toFixed(2);
+    }
+    $('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';
+    applyMaterialInputs(scopeMeshes());updateBloom();updateShaderStudioUI();
+    status(`${p.label} 프리뷰 프리셋 적용 (Unity/Unreal 결과 보장 아님)`);
+  };
   $('#btnPresetExport').onclick=()=>{
     const ui=readControls(presetFields,getField);
     const slotFlows=Object.fromEntries(state.slotFlows);
@@ -1065,9 +1150,10 @@ function bindUI(){
     controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(1,.65,1).normalize().multiplyScalar(radius*4));controls.update();
   };
   $('#btnQAReport').onclick=()=>{
-    const report={tool:'maxVFX Model Inspector',version:'0.9.0',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
+    const report={tool:'maxVFX Model Inspector',version:'0.9.5',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
       primary:inspectAsset(state.model,state.uvChannel),secondary:state.compareRoot?inspectAsset(state.compareRoot,state.uvChannel):null,
-      notes:['Overlapping UVs can be intentional for VFX.','Large meshes are sampled for diagnostics.','Draw calls and FPS depend on device and view state.']};
+      advancedUV:latestDiagnostic,
+      notes:['Overlapping UVs can be intentional for VFX.','Pro scanner is bounded and marks partial results. Run Full QA Scan before exporting.','Draw calls and FPS depend on device and view state.']};
     downloadJSON('maxVFX-production-report.json',report);status('검수 리포트 저장 완료');
   };
   $('#applyScope').addEventListener('change',()=>{updateMaterialSlotSelect();status('Apply to 범위 변경 · 이후 텍스처/수치 편집에 적용됩니다.');});

@@ -6,7 +6,7 @@ export const SHADER_FIELD_DEFAULTS = Object.freeze({
   fxDissolve:false,fxDissolveAmount:0.3,fxDissolveWidth:0.08,fxDissolveColor:'#ff873a',fxDissolveGlow:1,
   fxNoiseStrength:0,fxNoiseMode:'multiply',fxNoiseScaleU:1,fxNoiseScaleV:1,fxNoiseSpeedU:0,fxNoiseSpeedV:0,
   fxMaskStrength:1,fxMaskChannel:'r',fxMaskInvert:false,fxDistort:0,
-  fxDepthFade:false,fxFadeDistance:0.5,fxPlaneVisible:true,
+  fxDepthFade:false,fxFadeDistance:0.5,fxPlaneVisible:true,fxDepthSource:'plane',
 });
 const range=(v,a,b,f)=>{const n=Number(v);return Number.isFinite(n)?Math.max(a,Math.min(b,n)):f;};
 export function normalizeShaderStudio(input={}) {
@@ -15,6 +15,7 @@ export function normalizeShaderStudio(input={}) {
   for (const [k,a,b] of [['fxFresnelPower',0.2,12],['fxFresnelStrength',0,12],['fxDissolveAmount',0,1],['fxDissolveWidth',0.001,0.5],['fxDissolveGlow',0,15],['fxNoiseStrength',0,1],['fxNoiseScaleU',0.01,64],['fxNoiseScaleV',0.01,64],['fxNoiseSpeedU',-16,16],['fxNoiseSpeedV',-16,16],['fxMaskStrength',0,1],['fxDistort',0,0.3],['fxFadeDistance',0.001,25]]) s[k]=range(input[k],a,b,s[k]);
   s.fxNoiseMode=['multiply','add','lerp'].includes(input.fxNoiseMode)?input.fxNoiseMode:s.fxNoiseMode;
   s.fxMaskChannel=['r','g','b','a'].includes(input.fxMaskChannel)?input.fxMaskChannel:s.fxMaskChannel;
+  s.fxDepthSource=['plane','comparison','both'].includes(input.fxDepthSource)?input.fxDepthSource:'plane';
   for (const key of ['fxFresnelColor','fxDissolveColor']) if(/^#[0-9a-f]{6}$/i.test(input[key]||''))s[key]=input[key];
   return s;
 }
