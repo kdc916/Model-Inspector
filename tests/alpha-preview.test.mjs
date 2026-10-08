@@ -36,7 +36,7 @@ test('Shader patch injects uniform and alpha attribute once and updates without 
     onBeforeCompile(){compileCalls++},customProgramCacheKey(){return 'basic'}};
   installAlphaShader(mat);
   installAlphaShader(mat);
-  assert.equal(mat.customProgramCacheKey(),'basic|maxvfx-alpha-preview-v1');
+  assert.equal(mat.customProgramCacheKey(),'basic|maxvfx-alpha-preview-v2');
   const shader={uniforms:{},vertexShader:'void main(){\n#include <begin_vertex>\n}',
     fragmentShader:'void main(){\n#include <color_fragment>\n#include <alphamap_fragment>\n#include <alphatest_fragment>\n}'};
   mat.onBeforeCompile(shader,{});
@@ -50,6 +50,10 @@ test('Shader patch injects uniform and alpha attribute once and updates without 
   assert.equal(shader.uniforms.vfxAlphaOverlayStrength.value,.85);
   assert.equal(shader.uniforms.vfxAlphaMaskFactor.value,1);
   assert.equal(mat.onBeforeCompile,shaderBefore);
+  updateAlphaShaderUniforms(mat,{channel:'a',invert:true});
+  assert.deepEqual(shader.uniforms.vfxMaskWeights.value,[0,0,0,1]);
+  assert.equal(shader.uniforms.vfxMaskInvert.value,1);
+  assert.match(shader.fragmentShader,/USE_ALPHAMAP/);
 });
 
 test('interface offers independent alpha toggle and additive mode with bindings',()=>{

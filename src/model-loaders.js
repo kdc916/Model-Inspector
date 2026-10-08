@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { parseFbxColorLayers, restoreFBXAlpha } from './fbx-alpha-recovery.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -21,12 +22,13 @@ const norm = name => name.replaceAll('\\','/').replace(/^\.\//,'').replace(/^\/+
 
 /** The selected files never leave the browser. File names are mapped to ephemeral blob URLs. */
 export class LocalModelLoader {
-  constructor() { this.objectUrls = []; this.decoder = null; }
+  constructor(renderer=null) { this.objectUrls = []; this.decoder = null; this.renderer=renderer; this.ktx2=null; }
   dispose() {
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.objectUrls.length = 0;
     if (this.decoder) this.decoder.dispose();
-    this.decoder = null;
+    if (this.ktx2) this.ktx2.dispose();
+    this.decoder = null;this.ktx2=null;
   }
   makeManager(files) {
     const fileMap = new Map();
@@ -86,6 +88,11 @@ export class LocalModelLoader {
           this.decoder.setWorkerLimit(2);
           loader.setDRACOLoader(this.decoder);
           loader.setMeshoptDecoder(MeshoptDecoder);
+          if(this.renderer){
+            this.ktx2=new KTX2Loader(manager).setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/libs/basis/');
+            this.ktx2.detectSupport(this.renderer);
+            loader.setKTX2Loader(this.ktx2);
+          }
           // parse(..., '') avoids incorrect blob: parent paths for external .bin/.png.
           // LoadingManager resolves referenced filenames against the selected File objects.
           const raw = type === 'glb' ? await file.arrayBuffer() : await file.text();

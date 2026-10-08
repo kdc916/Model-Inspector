@@ -4,6 +4,11 @@ import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js
 import { VertexTangentsHelper } from 'three/addons/helpers/VertexTangentsHelper.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { DDSLoader } from 'three/addons/loaders/DDSLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { LocalModelLoader } from './model-loaders.js';
 import { createDemo, makeCheckerTexture } from './procedural.js';
 import { drawUVLayout, inspectMeshes } from './analysis.js';
@@ -11,6 +16,10 @@ import { finite, modelStats, textureOffsetFromVisual, triangleCount } from './uv
 import { analyzeUVStretch, extractVertexColors, analyzeVertexAlpha, locateVertexAlpha, readColorComponent } from './mesh-diagnostics.js';
 import { overlayState, alphaMaskFactor, installAlphaShader, updateAlphaShaderUniforms } from './alpha-preview.js';
 import { TEXTURE_SLOTS, ORM_SLOTS, normalScalePair, scopedMaterialIndices, materialValue, alphaMaterialSettings } from './material-controls.js';
+import { FLOW_SLOTS,blendSettings,createSlotFlow,textureTransform,flipbookAt,normalizePreset,MAX_PRESET_BYTES } from './production-core.js';
+import { exportPreset,importPreset,readControls,applyControlValues } from './preset-workflow.js';
+import { diagnoseMeshes } from './uv-diagnostics.js';
+import { inspectAsset,buildComparison } from './asset-report.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -27,7 +36,9 @@ const state = {
   uvPlaying:false, flowPhaseX:0, flowPhaseY:0, visualOffsetX:0, visualOffsetY:0,
   offsetsDirty:true, editableTextures:new WeakSet(), uploadedURLs:[],
   spin:false, fps:60, lastFpsUpdate:0, frameCount:0,
-  pointerDown:null, dragCount:0, loadGeneration:0, slotFiles:new Map()
+  pointerDown:null, dragCount:0, loadGeneration:0, slotFiles:new Map(),
+  slotFlows:new Map(), flowSeconds:0, flipbookSeconds:0, textureKTX2:null,
+  compareLoader:null, compareRoot:null, compareMeta:null
 };
 const slotNames=TEXTURE_SLOTS;
 const textureMapSlots=TEXTURE_SLOTS;
@@ -58,6 +69,19 @@ const rim = new THREE.DirectionalLight(0x83f4dc,1.0);rim.position.set(-2,6,8);sc
 const raycaster=new THREE.Raycaster();const rayPoint=new THREE.Vector2();
 const frameClock=new THREE.Clock();
 const checkerBase=makeCheckerTexture('checker');const gridBase=makeCheckerTexture('uvgrid');
+state.localLoader.renderer=renderer;
+const bloomComposer=new EffectComposer(renderer);
+bloomComposer.addPass(new RenderPass(scene,camera));
+const bloomPass=new UnrealBloomPass(new THREE.Vector2(512,512),.8,.2,1);
+bloomPass.enabled=false;bloomComposer.addPass(bloomPass);bloomComposer.addPass(new OutputPass());
+const flowFields={uv:'slotFlowUV',speedX:'slotFlowX',speedY:'slotFlowY',offsetX:'slotOffsetX',offsetY:'slotOffsetY',repeatX:'slotRepeatX',repeatY:'slotRepeatY'};
+const presetFields=['matColor','matBaseStrength','matRough','matMetal','matNormalStrength','matNormalFlipGreen','matAOIntensity','matEmissiveIntensity','matEmissiveColor','matBumpScale','matDisplacementScale','matDisplacementBias','matOpacity','matAlphaMode','matAlphaCutoff','matDepthTest','matDepthWrite','matCull','matMaskChannel','matMaskInvert','toggleAlphaOverlay','alphaOverlayView','alphaOverlayStrength','matBloom','matBloomStrength','matBloomRadius','matBloomThreshold','flowX','flowY','repeatX','repeatY','offsetX','offsetY','flowAllTextures','slotFlowEnabled','slotFlowSlot','flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'];
+function getField(id){return $('#'+id);}
+function downloadJSON(name,data){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}
+function saveSlotFlow(){const values={};for(const [k,id] of Object.entries(flowFields))values[k]=$('#'+id).value;state.slotFlows.set($('#slotFlowSlot').value,createSlotFlow(values));state.offsetsDirty=true;}
+function loadSlotFlow(){const flow=state.slotFlows.get($('#slotFlowSlot').value)||createSlotFlow();for(const [k,id] of Object.entries(flowFields))$('#'+id).value=flow[k];}
+function updateBloom(){bloomPass.enabled=$('#matBloom').checked;bloomPass.strength=finite($('#matBloomStrength').value,.8);bloomPass.threshold=finite($('#matBloomThreshold').value,1);bloomPass.radius=finite($('#matBloomRadius').value,.2);}
+
 
 function status(message,isError=false){
   const el=$('#statusMessage');el.textContent=message;el.style.color=isError?'#f2a9a0':'';
@@ -82,14 +106,22 @@ function prepareInspectionAlpha(mesh){
   // Warn in the Inspector rather than treating a missing channel as transparent.
 }
 function applyBlendToMaterial(mat,mode,opacity,cutoff){
-  const settings=alphaMaterialSettings(mode,opacity,cutoff);
-  mat.transparent=settings.transparent;
-  mat.opacity=settings.opacity;
-  mat.alphaTest=settings.alphaTest;
-  mat.depthWrite=settings.depthWrite;
-  mat.blending=settings.blending==='additive'?THREE.AdditiveBlending:THREE.NormalBlending;
-  mat.userData.vfxAlphaMode=settings.alphaMode;
-  mat.needsUpdate=true;
+  const cfg=blendSettings(mode,opacity,cutoff,$('#matDepthTest').checked,$('#matDepthWrite').checked,$('#matCull').value);
+  mat.transparent=cfg.transparent;mat.opacity=cfg.opacity;mat.alphaTest=cfg.alphaTest;
+  mat.depthTest=cfg.depthTest;mat.depthWrite=cfg.depthWrite;
+  mat.side=cfg.cull==='double'?THREE.DoubleSide:cfg.cull==='front'?THREE.FrontSide:THREE.BackSide;
+  mat.premultipliedAlpha=cfg.mode==='premultiply';
+  mat.blending={add:THREE.AdditiveBlending,multiply:THREE.MultiplyBlending}[cfg.mode]||THREE.NormalBlending;
+  if(cfg.mode==='premultiply'){
+    mat.blending=THREE.CustomBlending;mat.blendEquation=THREE.AddEquation;
+    mat.blendSrc=THREE.OneFactor;mat.blendDst=THREE.OneMinusSrcAlphaFactor;
+    mat.blendEquationAlpha=THREE.AddEquation;mat.blendSrcAlpha=THREE.OneFactor;mat.blendDstAlpha=THREE.OneMinusSrcAlphaFactor;
+  }else if(cfg.mode==='screen'){
+    mat.blending=THREE.CustomBlending;mat.blendEquation=THREE.AddEquation;
+    mat.blendSrc=THREE.OneFactor;mat.blendDst=THREE.OneMinusSrcColorFactor;
+    mat.blendEquationAlpha=THREE.AddEquation;mat.blendSrcAlpha=THREE.OneFactor;mat.blendDstAlpha=THREE.OneMinusSrcAlphaFactor;
+  }
+  mat.userData.vfxAlphaMode=cfg.mode;mat.needsUpdate=true;
 }
 /** Works on both PBR materials and checker/grid, independent of the main view mode. */
 function configureAlphaForMaterial(mesh,material){
@@ -102,7 +134,8 @@ function configureAlphaForMaterial(mesh,material){
   const rgbaColor=(state.originalGeos.get(mesh)||mesh.geometry).getAttribute('color');
   const preConsumed=Boolean(material.vertexColors && rgbaColor?.itemSize>=4);
   const mask=alphaMaskFactor(overlay.active,mode,hasAlpha,preConsumed);
-  updateAlphaShaderUniforms(material,{mode:overlay.mode,strength:overlay.strength,mask});
+  updateAlphaShaderUniforms(material,{mode:overlay.mode,strength:overlay.strength,mask,
+    channel:$('#matMaskChannel').value,invert:$('#matMaskInvert').checked});
 }
 function refreshAlphaOverlayStatus(){
   const checked=$('#toggleAlphaOverlay').checked;
@@ -255,11 +288,12 @@ function disposeModel(){
     }
     for(const tex of usedTextures)tex.dispose();
   }
+  disposeComparison();
   state.localLoader.dispose();
   for(const u of state.uploadedURLs)URL.revokeObjectURL(u);
   state.uploadedURLs=[];state.editableTextures=new WeakSet();state.slotFiles.clear();
   $$('.texture-slot').forEach(el=>{el.classList.remove('loaded');el.querySelector('small').textContent='Upload image';});
-  state.model=null;state.meshes=[];state.selected=null;state.clips=[];
+  state.model=null;state.meshes=[];state.selected=null;state.clips=[];state.flowSeconds=0;state.flipbookSeconds=0;
 }
 function installModel(root,meta={},clips=[]){
   disposeModel();
@@ -281,6 +315,7 @@ function installModel(root,meta={},clips=[]){
   $('#assetMeta').textContent=`${meta.format||'DEMO'} · ${state.meshes.length} meshes`+
     (meta.alphaRecovery?.restored?` · Alpha restored ${meta.alphaRecovery.restored}/${meta.alphaRecovery.sourceLayers}`:'');
   state.mode='material';updateDisplayMaterial();
+  $('#uvDiagnostics').textContent='UV 품질 분석 버튼을 눌러 검사를 시작하세요 (큰 메시에서 시간이 걸릴 수 있습니다).';
   updateVertexAlphaHealth();
   updateStats();updateHierarchy();updateInspector();updateMaterialSlotSelect();updateAnimSelect();updateWireframe();updateNormalHelper();updateTangentHelper();fitCamera(root);
   const alphaInfo=meta.alphaRecovery;
@@ -540,7 +575,7 @@ function applyMaterialInputs(meshes=scopeMeshes(),changed=null){
     if(!changed||changed==='matBumpScale')mat.bumpScale=materialValue('bumpScale',$('#matBumpScale').value);
     if(!changed||changed==='matDisplacementScale')mat.displacementScale=materialValue('displacementScale',$('#matDisplacementScale').value);
     if(!changed||changed==='matDisplacementBias')mat.displacementBias=materialValue('displacementBias',$('#matDisplacementBias').value);
-    if(!changed||changed==='matAlphaMode'||changed==='matOpacity'||changed==='matAlphaCutoff'){
+    if(!changed||['matAlphaMode','matOpacity','matAlphaCutoff','matDepthTest','matDepthWrite','matCull'].includes(changed)){
       applyBlendToMaterial(mat,settings.alphaMode,$('#matOpacity').value,$('#matAlphaCutoff').value);
     }
     mat.needsUpdate=true;
@@ -548,31 +583,34 @@ function applyMaterialInputs(meshes=scopeMeshes(),changed=null){
   if(['material','checker','uvgrid'].includes(state.mode))updateDisplayMaterial();
 }
 function applyTextureParameters(){
-  const x = state.visualOffsetX, y=state.visualOffsetY;
-  const offset=textureOffsetFromVisual(x,y);
-  const repX=clamp(finite($('#repeatX').value,1),.01,128);
-  const repY=clamp(finite($('#repeatY').value,1),.01,128);
-  const all=$('#flowAllTextures').checked;
-  // Use the same phase across visible and editable materials; do not mutate original imported textures.
+  const x=state.visualOffsetX,y=state.visualOffsetY;
+  const globalFlow=createSlotFlow({uv:state.uvChannel,offsetX:x,offsetY:y,
+    repeatX:$('#repeatX').value,repeatY:$('#repeatY').value});
+  const separate=$('#slotFlowEnabled').checked,all=$('#flowAllTextures').checked;
+  const flip=$('#flipbookEnabled').checked;
+  const atlas=flip?flipbookAt(state.flipbookSeconds,{cols:$('#flipbookColumns').value,rows:$('#flipbookRows').value,
+    fps:$('#flipbookFPS').value,loop:$('#flipbookLoop').checked}):null;
+  $('#flipbookStatus').textContent=atlas?`Frame ${atlas.frame+1}/${atlas.total} · column ${atlas.column+1} / row ${atlas.row+1}`:'Flipbook OFF';
   for(const mesh of state.meshes){
-    const cache=state.debugMats.get(mesh)||{};
-    const list=[];
+    const cache=state.debugMats.get(mesh)||{},list=[];
     if(cache.working)list.push(...(Array.isArray(cache.working)?cache.working:[cache.working]));
-    else if(state.uvPlaying||x||y||repX!==1||repY!==1||state.uvChannel!==0){list.push(...makeWorkingMaterials(mesh));}
+    else if(state.uvPlaying||x||y||globalFlow.repeatX!==1||globalFlow.repeatY!==1||state.uvChannel!==0||separate||flip)list.push(...makeWorkingMaterials(mesh));
     if(cache.checker)list.push(cache.checker);
     if(cache.uvgrid)list.push(cache.uvgrid);
     for(const mat of list){
-      for(const slot of all?textureMapSlots:['map']){
-        const tex=uniqueTextureForMaterial(mat,slot);
-        if(!tex)continue;
+      for(const slot of textureMapSlots){
+        const isDebug=mat===cache.checker||mat===cache.uvgrid;
+        if(isDebug&&slot!=='map')continue;
+        if(!isDebug&&!separate&&!all&&slot!=='map')continue;
+        const tex=uniqueTextureForMaterial(mat,slot);if(!tex)continue;
+        const chosen=(!isDebug&&separate)?state.slotFlows.get(slot)||createSlotFlow():globalFlow;
+        const tile=(!isDebug&&flip&&slot===$('#flipbookSlot').value)?atlas:null;
+        const tf=textureTransform(chosen,(!isDebug&&separate)?state.flowSeconds:0,tile);
         if(tex.wrapS!==THREE.RepeatWrapping||tex.wrapT!==THREE.RepeatWrapping){
           tex.wrapS=tex.wrapT=THREE.RepeatWrapping;tex.needsUpdate=true;
         }
-        tex.repeat.set(repX,repY);
-        tex.offset.set(offset.x,offset.y);
-        // Three supports uv, uv1, uv2, uv3 via Texture.channel. Not every geometry has all channels.
-        if(tex.channel!==state.uvChannel){tex.channel=state.uvChannel;mat.needsUpdate=true;}
-        // Offset and repeat uniforms update without texture re-upload.
+        tex.repeat.set(tf.repeatX,tf.repeatY);tex.offset.set(tf.offsetX,tf.offsetY);
+        if(tex.channel!==tf.uv){tex.channel=tf.uv;mat.needsUpdate=true;}
       }
     }
   }
@@ -596,16 +634,17 @@ function renderFlowArrow(){
 }
 async function applyUpload(slot,file){
   if(!file||!state.meshes.length){status('먼저 모델을 불러오세요.',true);return;}
-  if(!file.type.startsWith('image/') && !/\.(png|jpe?g|bmp|webp|gif|avif|tga|dds)$/i.test(file.name)){
-    status('지원하는 이미지 형식: PNG/JPG/WebP/BMP/AVIF/TGA/DDS',true);return;
+  if(!file.type.startsWith('image/') && !/\.(png|jpe?g|bmp|webp|gif|avif|tga|dds|ktx2)$/i.test(file.name)){
+    status('지원하는 이미지 형식: PNG/JPG/WebP/BMP/AVIF/TGA/DDS/KTX2',true);return;
   }
   const generation=state.loadGeneration;
   let url=URL.createObjectURL(file);state.uploadedURLs.push(url);
   let tex;
-  const uploadLoader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():new THREE.TextureLoader();
+  const uploadLoader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():
+    /\.ktx2$/i.test(file.name)?getTextureKTX2Loader():new THREE.TextureLoader();
   try{tex=await uploadLoader.loadAsync(url);}catch(err){status(`텍스처 로드 실패: ${err.message}`,true);return;}
   if(generation!==state.loadGeneration){tex.dispose();return;}
-  tex.flipY=$('#flipTextureY').checked;
+  if(!/\.ktx2$/i.test(file.name))tex.flipY=$('#flipTextureY').checked;
   tex.colorSpace=['map','emissiveMap'].includes(slot)?THREE.SRGBColorSpace:THREE.NoColorSpace;
   tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
   const targets=scopeMeshes();
@@ -631,16 +670,17 @@ async function applyUpload(slot,file){
 }
 async function uploadORM(file){
   if(!file||!state.meshes.length){status('먼저 모델을 불러오세요.',true);return;}
-  if(!file.type.startsWith('image/')&&!/\.(png|jpe?g|bmp|webp|gif|avif|tga|dds)$/i.test(file.name)){
+  if(!file.type.startsWith('image/')&&!/\.(png|jpe?g|bmp|webp|gif|avif|tga|dds|ktx2)$/i.test(file.name)){
     status('ORM 입력 형식이 지원되지 않습니다.',true);return;
   }
   const generation=state.loadGeneration;
   const url=URL.createObjectURL(file);state.uploadedURLs.push(url);
-  const loader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():new THREE.TextureLoader();
+  const loader=/\.tga$/i.test(file.name)?new TGALoader():/\.dds$/i.test(file.name)?new DDSLoader():
+    /\.ktx2$/i.test(file.name)?getTextureKTX2Loader():new THREE.TextureLoader();
   let source;
   try{source=await loader.loadAsync(url);}catch(e){status('ORM 로딩 실패: '+e.message,true);return;}
   if(generation!==state.loadGeneration){source.dispose();return;}
-  source.colorSpace=THREE.NoColorSpace;source.flipY=$('#flipTextureY').checked;
+  source.colorSpace=THREE.NoColorSpace;if(!/\.ktx2$/i.test(file.name))source.flipY=$('#flipTextureY').checked;
   source.wrapS=source.wrapT=THREE.RepeatWrapping;
   const targets=scopeMeshes();
   for(const mesh of targets)for(const mat of scopedMaterials(mesh)){
@@ -683,6 +723,7 @@ function resetMaterialUI(){
   }
   $('#matColor').value='#ffffff';$('#matEmissiveColor').value='#ffffff';
   $('#matAlphaMode').value='opaque';$('#matAlphaCutoff').disabled=true;$('#matNormalFlipGreen').checked=false;
+  $('#matDepthTest').checked=$('#matDepthWrite').checked=true;$('#matCull').value='double';$('#matMaskChannel').value='g';$('#matMaskInvert').checked=false;
 }
 function resetMaterials(){
   for(const mesh of scopeMeshes()){
@@ -699,12 +740,63 @@ function resetMaterials(){
   }
   $$('.texture-slot').forEach(el=>{el.classList.remove('loaded');el.querySelector('small').textContent='Upload image';});
   state.slotFiles.clear();resetMaterialUI();$('#ormFileName').textContent='Not loaded';
+  state.flowSeconds=state.flipbookSeconds=0;state.slotFlows.clear();loadSlotFlow();
   state.visualOffsetX=state.visualOffsetY=0;state.flowPhaseX=state.flowPhaseY=0;
   $('#offsetX').value=0;$('#offsetY').value=0;
   state.uvPlaying=false;$('#btnUVPlay').textContent='▶ UV Flow Play';$('#flowOverlay').hidden=true;
   state.offsetsDirty=true;updateDisplayMaterial();
   status('재질 오버라이드를 초기화했습니다.');
 }
+function getTextureKTX2Loader(){
+  if(!state.textureKTX2){
+    state.textureKTX2=new KTX2Loader().setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/libs/basis/');
+    state.textureKTX2.detectSupport(renderer);
+  }
+  return state.textureKTX2;
+}
+function updateDiagnostics(){
+  const data=diagnoseMeshes(inspected().map(mesh=>({name:mesh.name,geometry:state.originalGeos.get(mesh)||mesh.geometry})),state.uvChannel);
+  const s=data.summary;
+  $('#uvDiagnostics').textContent=`UV${state.uvChannel} · scanned ${s.analyzed||0}/${s.faces||0} faces\n`+
+    `overlaps ${s.overlapPairs||0} · flipped ${s.flipped||0} · degenerate ${s.degenerate||0}\n`+
+    `bad normals ${s.invalidNormals||0} · opposing ${s.opposingNormals||0}`+
+    (data.reports.some(r=>r.partial)?'\n⚠ 일부 대형 메시 샘플링 제한':'')+
+    '\n* VFX에서 UV 겹침/반전은 연출 의도일 수 있습니다.';
+  return data;
+}
+function disposeComparison(){
+  if(state.compareRoot){scene.remove(state.compareRoot);
+    const geometries=new Set(),mats=new Set(),textures=new Set();
+    state.compareRoot.traverse(o=>{if(o.geometry)geometries.add(o.geometry);
+      for(const m of (o.material?Array.isArray(o.material)?o.material:[o.material]:[])){mats.add(m);for(const slot of textureMapSlots)if(m[slot])textures.add(m[slot]);}
+    });
+    for(const g of geometries)g.dispose();for(const m of mats)m.dispose();for(const t of textures)t.dispose();
+  }
+  state.compareLoader?.dispose();state.compareRoot=null;state.compareLoader=null;state.compareMeta=null;
+  $('#comparisonResults').textContent='비교 모델을 불러오면 폴리곤·UV·알파 차이를 표시합니다.';
+}
+async function openComparison(files){
+  if(!files.length||!state.model)return;
+  const loader=new LocalModelLoader(renderer);
+  try{
+    status('비교 모델 로딩 중...');const result=await loader.load(files);
+    disposeComparison();state.compareRoot=result.root;state.compareLoader=loader;state.compareMeta=result;
+    const primaryBox=new THREE.Box3().setFromObject(state.model);
+    const secondaryBox=new THREE.Box3().setFromObject(result.root);
+    if(!primaryBox.isEmpty()&&!secondaryBox.isEmpty()){
+      const gap=Math.max(primaryBox.getSize(new THREE.Vector3()).length()*.1,.2);
+      result.root.position.x+=primaryBox.max.x-secondaryBox.min.x+gap;
+    }
+    scene.add(result.root);result.root.updateMatrixWorld(true);
+    const c=buildComparison(state.model,result.root,state.uvChannel),d=c.comparison.delta;
+    $('#comparisonResults').textContent=`A ${c.left.name} vs B ${c.right.name}\n`+
+      Object.entries(d).map(([k,v])=>`${k}: ${v.left.toLocaleString()} → ${v.right.toLocaleString()} (${v.diff>=0?'+':''}${v.diff.toLocaleString()})`).join('\n');
+    const box=new THREE.Box3().setFromObject(state.model).union(new THREE.Box3().setFromObject(result.root));
+    const center=box.getCenter(new THREE.Vector3());controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(5,4,6).normalize().multiplyScalar(Math.max(box.getSize(new THREE.Vector3()).length(),1)*1.8));
+    controls.update();status('비교 모델 로드 완료 · 좌: 기준 / 우: 비교');
+  }catch(err){loader.dispose();status('비교 파일 오류: '+err.message,true);}
+}
+
 async function openFiles(files){
   // FileInput.value is reset synchronously by the caller; snapshot FileList first.
   const inputFiles=Array.from(files||[]);
@@ -717,8 +809,8 @@ async function openFiles(files){
     // Loading a new model disposes old file URL maps: defer disposing the just loaded URLs.
     // Keep the active LocalModelLoader instance in state while replacing the old scene.
     const justLoaded=state.localLoader;
-    state.localLoader=new LocalModelLoader();
-    installModel(result.root,{name:result.name,format:result.format},result.animations);
+    state.localLoader=new LocalModelLoader(renderer);
+    installModel(result.root,{name:result.name,format:result.format,alphaRecovery:result.alphaRecovery},result.animations);
     state.localLoader=justLoaded;
   }catch(err){
     console.error(err);status(err.message||'알 수 없는 로딩 오류',true);
@@ -743,7 +835,7 @@ function bindUI(){
   $('#btnDemo').onclick=()=>installModel(createDemo(),{name:'Demo / VFX Study',format:'PROCEDURAL'});
   $('#btnAlphaReport').onclick=()=>{
     const inspectedMeshes=inspected();
-    const report={tool:'maxVFX Model Inspector',version:'0.5.0',asset:$('#assetTitle').textContent,
+    const report={tool:'maxVFX Model Inspector',version:'0.8.0',asset:$('#assetTitle').textContent,
       warning:'This report describes channels actually loaded by the browser; it does not prove which channels existed before FBX export.',
       meshes:inspectedMeshes.map(mesh=>{
         const geo=state.originalGeos.get(mesh)||mesh.geometry;
@@ -769,7 +861,7 @@ function bindUI(){
   $('#btnFrame').onclick=()=>fitCamera(state.model);
   $('#btnFocus').onclick=()=>fitCamera(state.selected||state.model);
   $('#btnScreenshot').onclick=()=>{
-    renderer.render(scene,camera);
+    if(bloomPass.enabled)bloomComposer.render();else renderer.render(scene,camera);
     const a=document.createElement('a');a.href=renderer.domElement.toDataURL('image/png');a.download=`maxVFX-View-${Date.now()}.png`;a.click();status('뷰포트 이미지를 저장했습니다.');
   };
   $('#toggleGrid').onchange=e=>grid.visible=e.target.checked;
@@ -837,7 +929,54 @@ function bindUI(){
   });
   for(const id of ['matColor','matEmissiveColor'])$('#'+id).addEventListener('input',()=>applyMaterialInputs(scopeMeshes(),id));
   $('#matNormalFlipGreen').addEventListener('change',()=>applyMaterialInputs(scopeMeshes(),'matNormalFlipGreen'));
-  $('#matAlphaMode').addEventListener('change',()=>{$('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';applyMaterialInputs(scopeMeshes(),'matAlphaMode');});
+  $('#matAlphaMode').addEventListener('change',()=>{
+    const kind=$('#matAlphaMode').value;
+    $('#matAlphaCutoff').disabled=kind!=='mask';
+    $('#matDepthWrite').checked=['opaque','mask'].includes(kind);
+    applyMaterialInputs(scopeMeshes(),'matAlphaMode');
+  });
+  for(const id of ['matDepthTest','matDepthWrite','matCull'])$('#'+id).addEventListener('change',()=>applyMaterialInputs(scopeMeshes(),id));
+  for(const id of ['matMaskChannel','matMaskInvert'])$('#'+id).addEventListener('change',updateDisplayMaterial);
+  for(const id of ['matBloom','matBloomStrength','matBloomThreshold','matBloomRadius'])$('#'+id).addEventListener('input',()=>{
+    for(const [input,out] of [['matBloomStrength','valueBloomStrength'],['matBloomThreshold','valueBloomThreshold'],['matBloomRadius','valueBloomRadius']])$('#'+out).textContent=Number($('#'+input).value).toFixed(2);
+    updateBloom();
+  });
+  $('#slotFlowSlot').addEventListener('change',loadSlotFlow);
+  for(const id of Object.values(flowFields))$('#'+id).addEventListener('input',saveSlotFlow);
+  $('#slotFlowEnabled').addEventListener('change',()=>{state.flowSeconds=0;state.offsetsDirty=true;applyTextureParameters();});
+  for(const id of ['flipbookEnabled','flipbookSlot','flipbookColumns','flipbookRows','flipbookFPS','flipbookLoop'])$('#'+id).addEventListener('change',()=>{state.flipbookSeconds=0;state.offsetsDirty=true;applyTextureParameters();});
+  $('#btnUVAnalyze').onclick=()=>updateDiagnostics();
+  $('#btnPresetExport').onclick=()=>{
+    const ui=readControls(presetFields,getField);
+    const slotFlows=Object.fromEntries(state.slotFlows);
+    downloadJSON('maxVFX-material-preset-v0.8.json',exportPreset(ui,slotFlows));status('프리셋 JSON 저장 완료');
+  };
+  $('#btnPresetImport').onclick=()=>$('#presetFileInput').click();
+  $('#presetFileInput').onchange=async e=>{
+    const f=e.target.files?.[0];e.target.value='';if(!f)return;
+    try{const p=await importPreset(f);applyControlValues(p.ui,getField);
+      state.slotFlows=new Map(Object.entries(p.slotFlows));loadSlotFlow();
+      state.flowPhaseX=state.flowPhaseY=state.flowSeconds=state.flipbookSeconds=0;
+      $('#matAlphaCutoff').disabled=$('#matAlphaMode').value!=='mask';
+      const targets=scopeMeshes();applyMaterialInputs(targets);updateBloom();setAlphaOverlay($('#toggleAlphaOverlay').checked);state.offsetsDirty=true;
+      applyTextureParameters();status('프리셋 적용 완료. 텍스처 파일은 별도로 올려야 합니다.');
+    }catch(err){status('프리셋 오류: '+err.message,true);}
+  };
+  $('#btnCompareOpen').onclick=()=>$('#compareFileInput').click();
+  $('#compareFileInput').onchange=e=>{openComparison(Array.from(e.target.files||[]));e.target.value='';};
+  $('#btnCompareClear').onclick=()=>{disposeComparison();fitCamera(state.model);status('비교 모델을 제거했습니다.');};
+  $('#btnCompareFocus').onclick=()=>{
+    if(!state.compareRoot)return fitCamera(state.model);
+    const box=new THREE.Box3().setFromObject(state.model).union(new THREE.Box3().setFromObject(state.compareRoot));
+    const center=box.getCenter(new THREE.Vector3()),radius=Math.max(box.getSize(new THREE.Vector3()).length()*.5,.01);
+    controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(1,.65,1).normalize().multiplyScalar(radius*4));controls.update();
+  };
+  $('#btnQAReport').onclick=()=>{
+    const report={tool:'maxVFX Model Inspector',version:'0.8.0',generatedAt:new Date().toISOString(),uvChannel:state.uvChannel,
+      primary:inspectAsset(state.model,state.uvChannel),secondary:state.compareRoot?inspectAsset(state.compareRoot,state.uvChannel):null,
+      notes:['Overlapping UVs can be intentional for VFX.','Large meshes are sampled for diagnostics.','Draw calls and FPS depend on device and view state.']};
+    downloadJSON('maxVFX-production-report.json',report);status('검수 리포트 저장 완료');
+  };
   $('#applyScope').addEventListener('change',()=>{updateMaterialSlotSelect();status('Apply to 범위 변경 · 이후 텍스처/수치 편집에 적용됩니다.');});
   $('#matSlotIndex').addEventListener('change',()=>status('Material ID 범위 변경 · 이후 편집부터 적용됩니다.'));
   $$('.texture-slot').forEach(label=>{
@@ -870,7 +1009,7 @@ function bindUI(){
 function sizeRenderer(){
   const w=viewport.clientWidth,h=viewport.clientHeight;
   if(w<1||h<1)return;
-  renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
+  renderer.setSize(w,h,false);bloomComposer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();
 }
 const resizeObserver=new ResizeObserver(sizeRenderer);resizeObserver.observe(viewport);
 function animate(){
@@ -878,6 +1017,7 @@ function animate(){
   const dt=Math.min(frameClock.getDelta(),.08);
   if(state.animationPlaying&&state.sceneMixer)state.sceneMixer.update(dt);
   if(state.uvPlaying){
+    state.flowSeconds=(state.flowSeconds+dt)%4096;
     // Increment phases rather than multiplying elapsed time by velocity.
     state.flowPhaseX=(state.flowPhaseX+finite($('#flowX').value)*dt)%4096;
     state.flowPhaseY=(state.flowPhaseY+finite($('#flowY').value)*dt)%4096;
@@ -885,11 +1025,12 @@ function animate(){
     state.visualOffsetY=finite($('#offsetY').value)+state.flowPhaseY;
     state.offsetsDirty=true;
   }
+  if($('#flipbookEnabled').checked){state.flipbookSeconds+=dt;state.offsetsDirty=true;}
   if(state.offsetsDirty)applyTextureParameters();
   controls.update();
   state.normalHelper?.update();
   state.tangentHelper?.update();
-  renderer.render(scene,camera);
+  if(bloomPass.enabled)bloomComposer.render();else renderer.render(scene,camera);
   state.frameCount++;
   const t=performance.now();
   if(t-state.lastFpsUpdate>700){

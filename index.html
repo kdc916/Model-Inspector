@@ -17,7 +17,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.5.0</span></small></div></div>
+    <div class="branding"><div class="logo-mark">M<span>⁄</span></div><div><strong>maxVFX <em>Model Inspector</em></strong><small>3D ASSET WORKBENCH <span class="release">v0.8.0</span></small></div></div>
     <div class="top-actions"><div class="local-badge"><span class="status-dot"></span> LOCAL PROCESSING</div><button class="ghost small" id="btnHelp" title="사용법">도움말</button><button class="primary" id="btnOpen">＋ 모델 열기</button></div>
   </header>
 
@@ -60,7 +60,7 @@
   </main>
 
   <aside class="right-panel panel">
-    <div class="right-tabs"><button class="right-tab active" data-tab="inspect">Inspector</button><button class="right-tab" data-tab="uv">UV & Flow</button><button class="right-tab" data-tab="material">Material</button></div>
+    <div class="right-tabs"><button class="right-tab active" data-tab="inspect">Inspector</button><button class="right-tab" data-tab="uv">UV & Flow</button><button class="right-tab" data-tab="material">Material</button><button class="right-tab" data-tab="workflow">Workflow</button></div>
     <div class="right-content">
       <section class="tabpage active" id="page-inspect">
         <div class="section-title"><span>GEOMETRY INFO</span><span class="chip">MESH</span></div>
@@ -69,7 +69,7 @@
         <div class="section-title separated"><span>UV CHANNELS</span><span class="chip" id="uvSummary">—</span></div>
         <div class="uv-health" id="uvHealth">모델의 UV 상태를 분석합니다.</div><div class="diagnostic-result" id="stretchHealth" aria-live="polite">UV stretch 검사 준비 중</div>
         <div class="field" id="vertexOptions" hidden><label for="vertexChannel">Vertex RGBA visualization</label><select id="vertexChannel"><option value="rgb">RGB combined</option><option value="r">Red</option><option value="g">Green</option><option value="b">Blue</option><option value="a">Alpha (grayscale)</option></select></div>
-        <div class="diagnostic-result" id="vertexAlphaHealth">Vertex Alpha 채널을 검사합니다.</div>
+        <div class="section-title separated"><span>UV PRODUCTION DIAGNOSTICS</span></div><button class="subtle full" id="btnUVAnalyze">◈ UV 품질 분석</button><div class="diagnostic-result" id="uvDiagnostics">겹침·뒤집힘·퇴화 UV와 노멀을 분석합니다. VFX에서는 중첩이 의도적일 수 있습니다.</div><div class="diagnostic-result" id="vertexAlphaHealth">Vertex Alpha 채널을 검사합니다.</div>
         <button class="subtle full" id="btnAlphaReport">⇩ Vertex Alpha 진단 리포트 (.json)</button>
         <div class="note small-note">3ds Max의 Vertex Alpha는 Map Channel -2입니다. FBX에서 RGB만 들어오면 알파를 1로 만들지 않고 핑크색으로 표시합니다. 흰색으로만 나타나면 보고서에서 'A 채널 미포함'과 'A=1.0'을 구분하세요.</div>
         <div class="section-title separated"><span>VERTEX ALPHA OVERLAY</span><span class="chip">LIVE</span></div>
@@ -104,6 +104,21 @@
         <div class="inline-actions action-primary"><button class="primary" id="btnUVPlay">▶ UV Flow Play</button><button class="subtle" id="btnUVReset">↺ Reset offset</button></div>
         <div class="uv-statusline">Current visual UV shift <strong id="currentOffset">U 0.000 · V 0.000</strong></div>
         <div class="field compact"><label class="check"><input type="checkbox" id="flowAllTextures" checked> 연결된 모든 텍스처 슬롯을 함께 이동</label></div>
+        <div class="section-title separated"><span>INDEPENDENT UV FLOW</span><span class="chip">VFX</span></div>
+        <label class="check material-check"><input id="slotFlowEnabled" type="checkbox"> 텍스처마다 개별 UV 설정 사용</label>
+        <div class="field"><label>Texture slot</label><select id="slotFlowSlot"><option value="map">Base Color</option><option value="emissiveMap">Emissive</option><option value="alphaMap">Opacity / Mask</option><option value="normalMap">Normal</option><option value="roughnessMap">Roughness</option><option value="metalnessMap">Metallic</option><option value="aoMap">AO</option><option value="bumpMap">Bump</option><option value="displacementMap">Displacement</option></select></div>
+        <div class="field"><label>UV channel</label><select id="slotFlowUV"><option value="0">UV0</option><option value="1">UV1</option><option value="2">UV2</option><option value="3">UV3</option></select></div>
+        <div class="speed-grid"><div class="field"><label>Speed X</label><input id="slotFlowX" type="number" min="-8" max="8" step="0.05" value="0"></div><div class="field"><label>Speed Y</label><input id="slotFlowY" type="number" min="-8" max="8" step="0.05" value="0"></div></div>
+        <div class="speed-grid"><div class="field"><label>Offset X</label><input id="slotOffsetX" type="number" step="0.05" value="0"></div><div class="field"><label>Offset Y</label><input id="slotOffsetY" type="number" step="0.05" value="0"></div></div>
+        <div class="speed-grid"><div class="field"><label>Tiling U</label><input id="slotRepeatX" type="number" min=".01" max="128" step="0.25" value="1"></div><div class="field"><label>Tiling V</label><input id="slotRepeatY" type="number" min=".01" max="128" step="0.25" value="1"></div></div>
+        <div class="section-title separated"><span>FLIPBOOK / ATLAS</span></div>
+        <label class="check material-check"><input id="flipbookEnabled" type="checkbox"> Flipbook animation 사용</label>
+        <div class="field"><label>Flipbook Texture</label><select id="flipbookSlot"><option value="map">Base Color</option><option value="emissiveMap">Emissive</option><option value="alphaMap">Opacity / Mask</option></select></div>
+        <div class="speed-grid"><div class="field"><label>Columns</label><input id="flipbookColumns" type="number" min="1" max="64" step="1" value="4"></div><div class="field"><label>Rows</label><input id="flipbookRows" type="number" min="1" max="64" step="1" value="4"></div></div>
+        <div class="field"><label>Playback FPS</label><input id="flipbookFPS" type="number" min="0.01" max="120" step="1" value="12"></div>
+        <label class="check material-check"><input id="flipbookLoop" type="checkbox" checked> Loop</label>
+        <div class="uv-statusline" id="flipbookStatus">Flipbook OFF</div>
+
       </section>
 
       <section class="tabpage" id="page-material">
@@ -111,17 +126,17 @@
         <div class="field"><label for="applyScope">Apply to</label><select id="applyScope"><option value="all">All meshes</option><option value="selected">Selected mesh only</option></select></div>
         <div class="field"><label for="matSlotIndex">Material ID (selected mesh)</label><select id="matSlotIndex" disabled><option value="all">All material IDs</option></select></div>
         <div class="note small-note">Selected mesh + Material ID를 지정하면 해당 서브 머티리얼만 편집합니다. 전체 범위는 기존처럼 모든 메시·재질에 적용합니다.</div>
-        <label class="orm-upload" for="ormInput"><strong>⇧ Packed ORM 텍스처 불러오기</strong><span>AO = R · Roughness = G · Metallic = B</span><small id="ormFileName">Not loaded</small><input id="ormInput" type="file" accept="image/*,.tga,.dds" hidden></label>
+        <label class="orm-upload" for="ormInput"><strong>⇧ Packed ORM 텍스처 불러오기</strong><span>AO = R · Roughness = G · Metallic = B</span><small id="ormFileName">Not loaded</small><input id="ormInput" type="file" accept="image/*,.tga,.dds,.ktx2" hidden></label>
         <div class="texture-grid">
-          <label class="texture-slot" data-slot="map"><input type="file" accept="image/*,.tga,.dds" data-texture="map"><span class="texture-icon">▧</span><strong>Base Color</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="normalMap"><input type="file" accept="image/*,.tga,.dds" data-texture="normalMap"><span class="texture-icon normal-icon">◒</span><strong>Normal</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="roughnessMap"><input type="file" accept="image/*,.tga,.dds" data-texture="roughnessMap"><span class="texture-icon rough-icon">◧</span><strong>Roughness</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="metalnessMap"><input type="file" accept="image/*,.tga,.dds" data-texture="metalnessMap"><span class="texture-icon metal-icon">⬡</span><strong>Metallic</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="emissiveMap"><input type="file" accept="image/*,.tga,.dds" data-texture="emissiveMap"><span class="texture-icon emit-icon">✦</span><strong>Emissive</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="alphaMap"><input type="file" accept="image/*,.tga,.dds" data-texture="alphaMap"><span class="texture-icon alpha-icon">▥</span><strong>Opacity</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="aoMap"><input type="file" accept="image/*,.tga,.dds" data-texture="aoMap"><span class="texture-icon">◐</span><strong>Ambient Occlusion</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="bumpMap"><input type="file" accept="image/*,.tga,.dds" data-texture="bumpMap"><span class="texture-icon">≋</span><strong>Bump</strong><small>Upload image</small></label>
-          <label class="texture-slot" data-slot="displacementMap"><input type="file" accept="image/*,.tga,.dds" data-texture="displacementMap"><span class="texture-icon">△</span><strong>Height / Displacement</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="map"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="map"><span class="texture-icon">▧</span><strong>Base Color</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="normalMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="normalMap"><span class="texture-icon normal-icon">◒</span><strong>Normal</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="roughnessMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="roughnessMap"><span class="texture-icon rough-icon">◧</span><strong>Roughness</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="metalnessMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="metalnessMap"><span class="texture-icon metal-icon">⬡</span><strong>Metallic</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="emissiveMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="emissiveMap"><span class="texture-icon emit-icon">✦</span><strong>Emissive</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="alphaMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="alphaMap"><span class="texture-icon alpha-icon">▥</span><strong>Opacity</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="aoMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="aoMap"><span class="texture-icon">◐</span><strong>Ambient Occlusion</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="bumpMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="bumpMap"><span class="texture-icon">≋</span><strong>Bump</strong><small>Upload image</small></label>
+          <label class="texture-slot" data-slot="displacementMap"><input type="file" accept="image/*,.tga,.dds,.ktx2" data-texture="displacementMap"><span class="texture-icon">△</span><strong>Height / Displacement</strong><small>Upload image</small></label>
         </div>
         <div class="description">텍스처 슬롯을 클릭해서 이미지를 등록합니다. × 버튼으로 슬롯을 비울 수 있습니다. 노멀·Roughness·AO 등의 맵은 데이터 텍스처로 처리합니다.</div>
         <div class="section-title separated"><span>BASE / SURFACE</span></div>
@@ -140,18 +155,46 @@
         <div class="field"><label for="matDisplacementBias">Displacement bias <output id="valueDisplacementBias">0.00</output></label><input id="matDisplacementBias" type="range" min="-1" max="1" step="0.01" value="0"></div>
         <div class="section-title separated"><span>TRANSPARENCY</span></div>
         <div class="field"><label for="matOpacity">Overall opacity <output id="valueOpacity">1.00</output></label><input id="matOpacity" type="range" min="0" max="1" step="0.01" value="1"></div>
-        <div class="field"><label for="matAlphaMode">Transparency mode</label><select id="matAlphaMode"><option value="opaque">Opaque (불투명)</option><option value="blend">Alpha Blend (반투명)</option><option value="add">Additive (가산합성)</option><option value="mask">Alpha Clip (컷아웃)</option></select></div>
+        <div class="field"><label for="matAlphaMode">Transparency mode</label><select id="matAlphaMode"><option value="opaque">Opaque (불투명)</option><option value="blend">Alpha Blend (반투명)</option><option value="add">Additive (가산합성)</option><option value="premultiply">Premultiplied Alpha</option><option value="multiply">Multiply (곱셈)</option><option value="screen">Soft Add / Screen</option><option value="mask">Alpha Clip (컷아웃)</option></select></div>
         <div class="field"><label for="matAlphaCutoff">Alpha clip threshold <output id="valueAlphaCutoff">0.50</output></label><input id="matAlphaCutoff" type="range" min="0" max="1" step="0.01" value="0.5" disabled></div>
+        <div class="section-title separated"><span>RENDER STATE</span></div>
+        <label class="check material-check"><input id="matDepthTest" type="checkbox" checked> Depth Test (ZTest)</label>
+        <label class="check material-check"><input id="matDepthWrite" type="checkbox" checked> Depth Write (ZWrite)</label>
+        <div class="field"><label>Cull mode</label><select id="matCull"><option value="double">Double sided / Cull Off</option><option value="front">Front / Cull Back</option><option value="back">Back / Cull Front</option></select></div>
+        <div class="section-title separated"><span>MASK CHANNEL</span></div>
+        <div class="field"><label>Opacity map channel</label><select id="matMaskChannel"><option value="g">G (Three.js default)</option><option value="r">R</option><option value="b">B</option><option value="a">A</option></select></div>
+        <label class="check material-check"><input id="matMaskInvert" type="checkbox"> Invert mask</label>
+        <div class="section-title separated"><span>HDR / BLOOM</span></div>
+        <label class="check material-check"><input id="matBloom" type="checkbox"> Bloom Preview</label>
+        <div class="field"><label>Strength <output id="valueBloomStrength">0.80</output></label><input id="matBloomStrength" type="range" min="0" max="3" step="0.05" value="0.8"></div>
+        <div class="field"><label>Threshold <output id="valueBloomThreshold">1.00</output></label><input id="matBloomThreshold" type="range" min="0" max="3" step="0.05" value="1"></div>
+        <div class="field"><label>Radius <output id="valueBloomRadius">0.20</output></label><input id="matBloomRadius" type="range" min="0" max="1" step="0.05" value="0.2"></div>
+        <div class="note small-note">Bloom은 밝은 픽셀 전체에 적용되는 WebGL 후처리입니다. 특정 엔진의 Bloom 설정과 동일하지 않습니다.</div>
         <div class="note small-note">Opaque는 알파를 무시하고 불투명으로 표시합니다. Blend/Additive/Clip은 Vertex Alpha overlay를 활성화하면 메시의 A값도 사용합니다. Additive는 빛·오라처럼 밝게 더하는 미리보기입니다.</div><div class="note small-note">Opacity Map은 흑백 이미지의 G 채널을 사용합니다. RGBA PNG의 A 채널은 Base Color에서도 사용할 수 있습니다. UV가 없으면 텍스처가 표시되지 않을 수 있습니다. AO는 UV 채널 확인이 필요합니다.</div>
         <label class="check material-check"><input type="checkbox" id="flipTextureY"> Flip uploaded texture Y</label>
         <button class="subtle full" id="btnMaterialReset">↺ 원본 재질 복원</button>
+      </section>
+      <section class="tabpage" id="page-workflow">
+        <div class="section-title"><span>PRODUCTION WORKFLOW</span><span class="chip">0.8</span></div>
+        <div class="section-title separated"><span>PRESET</span></div>
+        <div class="inline-actions"><button class="subtle" id="btnPresetExport">↓ 설정 JSON 저장</button><button class="subtle" id="btnPresetImport">↑ JSON 불러오기</button></div>
+        <div class="description">머티리얼 수치, UV Flow, Flipbook, 블렌딩·뷰 설정을 저장합니다. 이미지 파일 자체는 포함하지 않습니다.</div>
+        <div class="section-title separated"><span>ASSET COMPARISON</span></div>
+        <button class="primary full" id="btnCompareOpen">＋ 비교 모델 불러오기</button>
+        <div class="inline-actions"><button class="subtle" id="btnCompareFocus">⌕ 두 모델 맞춤</button><button class="subtle" id="btnCompareClear">× 비교 제거</button></div>
+        <div class="diagnostic-result" id="comparisonResults">현재 모델과 비교할 두 번째 모델을 선택하세요. 파일·종속 텍스처를 함께 선택할 수 있습니다.</div>
+        <div class="section-title separated"><span>QA / OPTIMIZATION REPORT</span></div>
+        <button class="subtle full" id="btnQAReport">↓ JSON 검수 리포트</button>
+        <div class="description">모델별 트라이앵글·정점·UV·알파·노멀 검사 결과를 기록합니다. UV 중첩은 의도적일 수 있으며 절대 오류 판정이 아닙니다.</div>
+        <div class="section-title separated"><span>COMPATIBILITY</span></div>
+        <div class="description">GLB / glTF의 KTX2(BasisU) 해제를 지원합니다. 트랜스코더는 온라인 CDN 연결이 필요하며 모바일 GPU 호환성은 기기마다 다릅니다.</div>
       </section>
     </div>
     <footer class="right-footer"><span class="status-dot"></span><span id="statusMessage">Ready · 모델을 불러오세요</span></footer>
   </aside>
 </div>
 <input id="fileInput" type="file" multiple accept=".glb,.gltf,.fbx,.obj,.mtl,.stl,.ply,.3ds,.dae,.3mf,.blend,.max,.bin,.png,.jpg,.jpeg,.webp,.tga,.dds,.ktx2,.bmp" hidden />
-<input id="folderInput" type="file" multiple webkitdirectory directory hidden />
+<input id="compareFileInput" type="file" multiple accept=".fbx,.glb,.gltf,.obj,.mtl,.bin,.png,.jpg,.jpeg,.webp,.tga,.dds,.ktx2" hidden /><input id="presetFileInput" type="file" accept=".json,application/json" hidden /><input id="folderInput" type="file" multiple webkitdirectory directory hidden />
 <dialog id="helpDialog"><div class="modal-header"><strong>maxVFX Model Inspector</strong><button id="btnHelpClose" class="ghost" aria-label="닫기">✕</button></div><div class="modal-body"><h3>시작하기</h3><p>모델을 드래그하거나 <b>모델 열기</b>로 불러옵니다. glTF(.gltf)와 OBJ(.obj)는 이미지, .bin, .mtl 등 관련 파일을 함께 선택하거나 폴더 전체 선택을 이용하세요.</p><h3>UV / 텍스처 검사</h3><p>Checker/UV Grid/UV Stretch/Vertex RGB/Vertex Alpha를 전환하여 데이터를 검사합니다. <b>V.Alpha</b>는 Material / Checker / UV Grid 위에 겹쳐 켤 수 있습니다. 머티리얼의 Opaque/Blend/Additive/Clip을 조합해 확인하고, <b>UV & Flow</b>에서 X/Y 속도를 조절하세요. +X는 화면의 텍스처가 U+ 방향으로, +Y는 V+ 방향으로 이동하도록 보정합니다.</p><h3>Vertex Alpha 검증 / 3ds Max</h3><p><b>핑크 메시</b> = 실제로 로드된 Geometry에 Alpha가 없는 상태입니다. <b>흰색 메시</b> = RGBA A값이 1.0인 상태입니다. 3ds Max에서 Vertex Alpha(-2)에 페인트하고 Export FBX의 Vertex Colors 옵션을 켠 뒤 재수입하여 확인하세요. Exporter가 A를 전달하지 않은 경우 뷰어가 임의로 복원할 수는 없습니다.</p><h3>Blender / 3ds Max</h3><p><b>.blend</b>와 <b>.max</b>는 브라우저에서 직접 해석할 수 없습니다. Blender는 File → Export → glTF 2.0 (.glb), 3ds Max는 Export → FBX로 변환한 후 불러오세요. 동봉된 Blender 일괄 변환 스크립트도 사용할 수 있습니다.</p><h3>추가 머티리얼 옵션</h3><p>Packed ORM 이미지를 올리면 AO(R), Roughness(G), Metallic(B)에 자동 연결합니다. Normal Map Green 반전은 노멀 스케일 Y만 반전하며 원본 이미지를 수정하지 않습니다. 선택 메시의 Material ID별 편집을 지원합니다.</p><h3>단축 사용법</h3><p>좌클릭 회전 · 우클릭 패닝 · 휠 줌 · 메시 클릭하여 선택 · Fit으로 화면 맞춤. 원본 모델은 서버로 업로드되지 않습니다. 외부 라이브러리 로딩을 위해 인터넷 연결은 필요합니다.</p></div></dialog>
 <script>
 // No endless loading spinner when a CDN is blocked by the user's network.

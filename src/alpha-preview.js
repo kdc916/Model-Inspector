@@ -13,7 +13,7 @@ export function overlayState(checked, view, strength, hasAlpha, surfaceMode) {
 }
 /** Alpha mask is only used for transparency modes; visual overlay does not hide geometry in Opaque. */
 export function alphaMaskFactor(active, transparencyMode, hasAlpha, isRGBAAlreadyConsumed = false) {
-  return active && hasAlpha && !isRGBAAlreadyConsumed && ['blend','add','mask'].includes(transparencyMode) ? 1 : 0;
+  return active && hasAlpha && !isRGBAAlreadyConsumed && ['blend','add','premultiply','multiply','screen','mask'].includes(transparencyMode) ? 1 : 0;
 }
 /** Pure function: keep shader patching checks readable and testable. */
 export function overlayShaderSupported(material) {
@@ -26,6 +26,8 @@ export function installAlphaShader(material, THREE) {
     vfxAlphaOverlayMode: {value: 0},
     vfxAlphaOverlayStrength: {value: 0.55},
     vfxAlphaMaskFactor: {value: 0},
+    vfxMaskWeights: {value: [0,1,0,0]},
+    vfxMaskInvert: {value: 0},
   };
   const previous = material.onBeforeCompile;
   const priorKey = material.customProgramCacheKey.bind(material);
@@ -38,7 +40,7 @@ export function installAlphaShader(material, THREE) {
     shader.vertexShader = `attribute float vfxInspectionAlpha; varying float vfxAlphaValue;\n` + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n vfxAlphaValue = vfxInspectionAlpha;');
-    shader.fragmentShader = `varying float vfxAlphaValue; uniform float vfxAlphaOverlayMode; uniform float vfxAlphaOverlayStrength; uniform float vfxAlphaMaskFactor;\n` + shader.fragmentShader;
+    shader.fragmentShader = `varying float vfxAlphaValue; uniform float vfxAlphaOverlayMode; uniform float vfxAlphaOverlayStrength; uniform float vfxAlphaMaskFactor; uniform vec4 vfxMaskWeights; uniform float vfxMaskInvert;\n` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',
       `#include <color_fragment>
        float vfxA = clamp(vfxAlphaValue,0.0,1.0);
@@ -49,16 +51,22 @@ export function installAlphaShader(material, THREE) {
          diffuseColor.rgb = mix(diffuseColor.rgb,vec3(vfxA),vfxAlphaOverlayStrength);
        }`);
     shader.fragmentShader = shader.fragmentShader.replace('#include <alphamap_fragment>',
-      '#include <alphamap_fragment>\n diffuseColor.a *= mix(1.0,clamp(vfxAlphaValue,0.0,1.0),vfxAlphaMaskFactor);');
+      `#ifdef USE_ALPHAMAP
+         float vfxTextureMask = dot(texture2D(alphaMap, vAlphaMapUv), vfxMaskWeights);
+         diffuseColor.a *= mix(vfxTextureMask, 1.0-vfxTextureMask, vfxMaskInvert);
+       #endif
+       diffuseColor.a *= mix(1.0,clamp(vfxAlphaValue,0.0,1.0),vfxAlphaMaskFactor);`);
   };
-  material.customProgramCacheKey = () => `${priorKey()}|maxvfx-alpha-preview-v1`;
+  material.customProgramCacheKey = () => `${priorKey()}|maxvfx-alpha-preview-v2`;
   material.userData.vfxAlphaShader = uniforms;
   material.needsUpdate = true;
 }
-export function updateAlphaShaderUniforms(material, {mode = 0, strength = 0.55, mask = 0} = {}) {
+export function updateAlphaShaderUniforms(material, {mode = 0, strength = 0.55, mask = 0, channel='g', invert=false} = {}) {
   const params=material?.userData?.vfxAlphaShader;
   if (!params) return;
   params.vfxAlphaOverlayMode.value=mode;
   params.vfxAlphaOverlayStrength.value=strength;
   params.vfxAlphaMaskFactor.value=mask;
+  params.vfxMaskWeights.value={r:[1,0,0,0],g:[0,1,0,0],b:[0,0,1,0],a:[0,0,0,1]}[channel]||[0,1,0,0];
+  params.vfxMaskInvert.value=invert?1:0;
 }

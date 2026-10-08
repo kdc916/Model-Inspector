@@ -11,10 +11,10 @@ export function materialValue(name,value){
   const [lo,hi,base]=MATERIAL_RANGES[name]||[0,1,0];
   const num=Number(value);return Math.min(hi,Math.max(lo,Number.isFinite(num)?num:base));
 }
-export function resolveAlphaMode(mode){return ['opaque','blend','add','mask'].includes(mode)?mode:'opaque';}
+export function resolveAlphaMode(mode){return ['opaque','blend','add','premultiply','multiply','screen','mask'].includes(mode)?mode:'opaque';}
 export function alphaMaterialSettings(mode,opacity,cutoff){
   const kind=resolveAlphaMode(mode);const factor=materialValue('opacity',opacity);
-  return {transparent:kind==='blend'||kind==='add',alphaTest:kind==='mask'?materialValue('alphaCutoff',cutoff):0,
+  return {transparent:!['opaque','mask'].includes(kind),alphaTest:kind==='mask'?materialValue('alphaCutoff',cutoff):0,
     opacity:kind==='opaque'?1:factor,depthWrite:kind==='opaque'||kind==='mask',alphaMode:kind,
     blending:kind==='add'?'additive':'normal'};
 }

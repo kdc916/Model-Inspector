@@ -100,7 +100,7 @@ blender -b --python tools/blender_to_glb.py -- --input my_model.fbx --output my_
 - `Normal Color`는 표면 노멀 색상, `Normal/Tangent vectors`는 벡터 선입니다. Tangent 표시에는 모델에 tangent attribute가 있어야 합니다. 누락된 tangent를 임의 재생성하지 않습니다.
 - `UV Stretch`는 각 메시의 world area / UV area의 **선형값**을 계산하고 메시별 **중앙값(median)**에 대한 로그 편차를 색상으로 표시합니다. 파랑=UV가 상대적으로 촘촘, 초록=중앙값, 빨강=UV가 상대적으로 부족(늘어짐). 0 UV area/정상 데이터 없는 면은 회색입니다. **절대 texel density나 UV Overlap 검사와 다릅니다.**
 - Heatmap은 18만 triangles/mesh를 초과하면 성능 보호를 위해 회색으로 표시됩니다. 전체 요약도 최초 최대 18만 triangles 범위 내 메시를 대상으로 계산하며 생략한 메시 개수를 알립니다.
-- `Vertex RGBA`는 원본 color attribute의 RGB 및 R/G/B/A 채널을 회색조로 확인합니다. RGB 타입(알파 미포함)의 A 채널은 불투명(1)으로 간주합니다. Vertex Color 부재는 중립 회색으로 보입니다.
+- `Vertex RGBA`는 원본 color attribute의 RGB 및 R/G/B/A 채널을 회색조로 확인합니다. RGB 타입(알파 미포함)의 A 채널은 별도 값이 없다고 표시합니다(핑크 표시). Vertex Color 부재는 중립 회색으로 보입니다.
 - 다중 재질 메시의 UV Grid/Checker/Normal 디버그 표시에서 geometry.groups의 materialIndex를 보존하도록 디버그 재질을 복제 매핑합니다.
 - `Draw Calls`는 모델 단독 측정이 아니라 **뷰포트 장면의 렌더 호출 수**입니다. `Vertices`는 geometry의 Position attribute 카운트이므로 DCC에서 말하는 유니크 토폴로지 정점 수와 다를 수 있습니다.
 - UV 2D Preview는 2만5천 삼각형/메시 수준으로 샘플링하여 초고밀도 모델의 브라우저 부담을 줄입니다. Export도 동일 샘플링이 적용됩니다.
@@ -204,3 +204,45 @@ Under **Material → Transparency**, choose:
 - **Alpha Clip:** transparent fragments below the slider cutoff are discarded, also using vertex alpha when enabled.
 
 The existing dedicated `Vertex Alpha` view remains an absolute black–white diagnostic. Missing alpha is reported instead of treated as white. Tested with Node unit tests; Three.js CDN access is required for the browser app. The visual blending is a Three.js approximation and may differ from engine-specific material/shader settings.
+
+## v0.8.0 · VFX Production Workflow (2026-10-08)
+
+이 버전은 0.5.0 안정 기능을 유지하면서 0.6~0.8 기능을 함께 통합한 릴리스입니다.
+
+### 0.6 · Material Studio
+
+- `Opaque / Alpha Blend / Additive / Premultiplied / Multiply / Screen / Alpha Clip` 블렌딩 모드
+- ZTest, ZWrite, Cull Front / Back / Off 제어 (Three.js 근사 프리뷰이며 Unity·Unreal 픽셀 연산과 완전 동일하다는 의미는 아님)
+- Opacity Map RGBA 채널(R/G/B/A) 마스킹 및 Invert. 기존 FBX Vertex Alpha와 곱하여 프리뷰
+- 슬롯별 UV0~UV3, Flow Speed X/Y, Offset X/Y, Repeat X/Y. `Individual UV Flow`를 켜면 기존 글로벌 UV Flow 대신 사용하며 상단 UV Flow Play 버튼으로 재생
+- UnrealBloomPass 기반 HDR Bloom 프리뷰: Strength / Threshold / Radius. 밝은 픽셀에 적용되며 특정 엔진의 씬 색 관리·Glow와 다른 결과가 나올 수 있음
+
+### 0.7 · Animation & Diagnostics
+
+- Base Color/Emissive/Opacity 슬롯의 Atlas Flipbook: columns, rows, FPS, Loop, 프레임 진행 표시. 활성화되면 자동 재생하며 글로벌 UV Flow Play 상태와 독립적임
+- UV 진단: 뒤집힌 UV의 signed area, 퇴화 UV, 후보 삼각형 중첩 **면적 검사**, 비정상/반대 방향 노멀. 상단 Inspector의 `UV 품질 분석` 버튼으로 수동 실행
+- 중첩은 VFX에서 의도적인 경우가 많아 경고·통계로만 표시. 5,000 triangles/mesh 샘플 상한, 높은 밀도의 형상에서는 `partial` 표시
+
+### 0.8 · Production Workflow
+
+- Workflow 탭: JSON 설정 저장·불러오기 (텍스처 이미지 바이트 미포함, 텍스처 재업로드 필요)
+- 2번째 모델 불러오기: 오른쪽에 배치하고 트라이앵글·정점·머티리얼·UV·Vertex Alpha 유무를 비교
+- Production QA JSON 리포트: 모델별 메시·UV·Vertex Alpha·노멀 통계와 비교 자료
+- GLB/glTF KTX2/BasisU 압축 텍스처 디코더, 업로드 `.ktx2` 텍스처 지원. jsDelivr의 Basis 트랜스코더 연결 및 호환 GPU/WebGL 환경 필요
+- 주요 계산 분리: `production-core.js`, `preset-workflow.js`, `uv-diagnostics.js`, `asset-report.js`. 기존 FBX Alpha 복원, PBR, Checker, UV, 폴리곤 검사는 유지
+
+### 주의할 점
+
+- 이 도구는 **실제 Unity/Unreal 렌더 파이프라인 자체가 아니므로** 1:1 블렌드·깊이·톤매핑 일치가 보장되지 않습니다.
+- 세컨드 모델은 시각적으로 옆에 배치해 비교하며 씬에서 추출한 정적 메시 데이터 기준입니다. 자동 메시 디프·정점 대응, 애니메이션 리타겟, 재질 바이너리 비교는 지원하지 않습니다.
+- 일부 포맷은 변환기/인코더에 따라 커스텀 머티리얼·FBX 레이어가 유지되지 않을 수 있습니다.
+- 프리셋은 **제어 값만** 보관하고 모델, 이미지 파일, 임포트 환경은 포함하지 않습니다.
+- UV 중첩은 계산 예산으로 샘플링합니다. UDIM / 반복 타일링 / 0–1 밖 UV도 있지만 본 검사에서는 전 타일을 자동 정규화하지 않습니다.
+- Three.js 스크립트와 일부 트랜스코더를 CDN에서 불러오므로 인터넷 연결이 필요합니다. 순수한 오프라인 단일 HTML은 아닙니다.
+- 자동 테스트와 정적 검사는 통과해야 게시합니다. 실측 WebGL 결과는 브라우저/GPU/파일에 따라 별도 검증이 필요합니다.
+
+```bash
+npm test
+python -m http.server 8000
+# http://localhost:8000/
+```
